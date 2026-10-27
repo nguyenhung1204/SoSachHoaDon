@@ -14,6 +14,7 @@ import build_colab_notebook
 
 class NotebookBuilderTests(unittest.TestCase):
     def test_checked_in_notebook_embeds_current_postprocessors(self) -> None:
+        self.assertIn("run_40hd_benchmark.py", build_colab_notebook.MODULES)
         notebook = json.loads(build_colab_notebook.NOTEBOOK.read_text(encoding="utf-8"))
         code_cells = [cell for cell in notebook["cells"] if cell["cell_type"] == "code"]
         self.assertEqual(len(code_cells), 1)
@@ -61,6 +62,10 @@ class NotebookBuilderTests(unittest.TestCase):
         self.assertIn("drive_results_root = Path('/content/drive/MyDrive/SoSachHoaDon/ket_qua')", code)
         self.assertIn("'--output-dir', str(drive_results)", code)
         self.assertIn("'--resume'", code)
+        self.assertLess(
+            code.index("for filename, encoded in embedded_modules.items()"),
+            code.index("[sys.executable, '-u', str(work / 'run_40hd_benchmark.py')"),
+        )
         self.assertIn("ocr_regions.jsonl", code)
         self.assertIn("COMPLETE", code)
         self.assertIn("bundle_sha256", code)

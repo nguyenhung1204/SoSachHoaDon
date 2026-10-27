@@ -9,7 +9,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 NOTEBOOK = ROOT / "run_40HD_colab.ipynb"
-MODULES = ("structured_metrics_40hd.py", "visual_report_40hd.py")
+MODULES = (
+    "run_40hd_benchmark.py",
+    "requirements_40hd.txt",
+    "structured_metrics_40hd.py",
+    "visual_report_40hd.py",
+)
 
 
 def main() -> None:
@@ -50,7 +55,7 @@ work = Path('/content/40hd-benchmark')
 work.mkdir(parents=True, exist_ok=True)
 with ZipFile(local_bundle) as archive:
     names = set(archive.namelist())
-    required = {'40HD.json', 'run_40hd_benchmark.py', 'requirements_40hd.txt'}
+    required = {'40HD.json'}
     missing = required - names
     if missing:
         raise ValueError(f'ZIP thiếu file: {sorted(missing)}')
@@ -60,9 +65,15 @@ with ZipFile(local_bundle) as archive:
     )
     if pdf_count != 40:
         raise ValueError(f'ZIP có {pdf_count} PDF, cần đúng 40')
-    for name in ('run_40hd_benchmark.py', 'requirements_40hd.txt', '40HD.json'):
-        (work / name).write_bytes(archive.read(name))
+    (work / '40HD.json').write_bytes(archive.read('40HD.json'))
 print(f'Đã kiểm tra: {pdf_count} PDF và dữ liệu nhãn', flush=True)
+
+# Dùng đúng phiên bản benchmark cùng notebook; ZIP Drive chỉ cung cấp PDF và nhãn.
+embedded_modules = {
+__MODULES__
+}
+for filename, encoded in embedded_modules.items():
+    (work / filename).write_bytes(base64.b64decode(encoded))
 
 print('2/4 · Cài Tesseract, EasyOCR và PaddleOCR', flush=True)
 subprocess.run(['apt-get', 'update', '-qq'], check=True)
@@ -117,12 +128,6 @@ subprocess.run(
     check=True,
 )
 
-# Hai bộ hậu xử lý được nhúng trong notebook để không cần tải thêm file.
-embedded_modules = {
-__MODULES__
-}
-for filename, encoded in embedded_modules.items():
-    (work / filename).write_bytes(base64.b64decode(encoded))
 sys.path.insert(0, str(work))
 from structured_metrics_40hd import evaluate_run
 from visual_report_40hd import generate_visual_report
