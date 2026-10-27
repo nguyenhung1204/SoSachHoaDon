@@ -1,0 +1,6 @@
+pypdfium2>=4.30
+pytesseract>=0.3.13
+easyocr>=1.7.2
+paddleocr>=3.0,<4
+paddlepaddle>=3.0,<4
+Pillow>=10

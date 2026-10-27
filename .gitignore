@@ -1,0 +1,12 @@
+# Dữ liệu cá nhân và kết quả chạy
+*.zip
+*.pdf
+40HD.json
+ground_truth.csv
+utility_exclusions.csv
+hoa_don_108_nhan_nhan_mat_hang/
+results/
+ket_qua/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
