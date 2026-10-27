@@ -71,6 +71,39 @@ class NotebookBuilderTests(unittest.TestCase):
         self.assertIn("bundle_sha256", code)
         self.assertIn("regions_jsonl=drive_results / 'ocr_regions.jsonl'", code)
 
+    def test_notebook_selects_gpu_when_available_and_falls_back_to_cpu(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            notebook_path = root / "run_40HD_colab.ipynb"
+            notebook_path.write_text(json.dumps({
+                "cells": [{"cell_type": "code", "source": ["print('starter')\n"]}],
+            }), encoding="utf-8")
+            for module_name in build_colab_notebook.MODULES:
+                (root / module_name).write_text("# embedded test module\n", encoding="utf-8")
+
+            old_root, old_notebook = build_colab_notebook.ROOT, build_colab_notebook.NOTEBOOK
+            try:
+                build_colab_notebook.ROOT = root
+                build_colab_notebook.NOTEBOOK = notebook_path
+                build_colab_notebook.main()
+            finally:
+                build_colab_notebook.ROOT, build_colab_notebook.NOTEBOOK = old_root, old_notebook
+
+            generated = json.loads(notebook_path.read_text(encoding="utf-8"))
+            code = "".join(next(c for c in generated["cells"] if c["cell_type"] == "code")["source"])
+            markdown = "".join(next(c for c in generated["cells"] if c["cell_type"] == "markdown")["source"])
+
+        self.assertIn("paddlepaddle-gpu==3.2.0", code)
+        self.assertIn("paddlepaddle==3.2.0", code)
+        self.assertIn("packages/stable/cu118/", code)
+        self.assertIn("packages/stable/cpu/", code)
+        self.assertIn("'--device', 'auto'", code)
+        self.assertIn("nvidia-smi", code)
+        self.assertIn("shutil.which('nvidia-smi') is not None", code)
+        self.assertIn("paddle.is_compiled_with_cuda()", code)
+        self.assertIn("bằng tài khoản Colab hiện tại", markdown)
+        self.assertIn("GPU có thể không được cấp", markdown)
+
 
 if __name__ == "__main__":
     unittest.main()

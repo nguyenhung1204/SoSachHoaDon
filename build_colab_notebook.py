@@ -82,11 +82,78 @@ subprocess.run(
      'tesseract-ocr', 'tesseract-ocr-eng', 'tesseract-ocr-vie'],
     check=True,
 )
+# PaddleOCR 3.x needs PaddlePaddle >= 3.0. Install its runtime separately so
+# the CPU requirement in requirements_40hd.txt cannot override a GPU runtime.
+base_requirements = work / 'requirements_colab_base.txt'
+base_requirements.write_text(
+    ''.join(
+        line for line in (work / 'requirements_40hd.txt').read_text(encoding='utf-8').splitlines(keepends=True)
+        if not re.match(r'\\s*paddlepaddle\\s*(?:[<=>!~]|$)', line, re.IGNORECASE)
+    ),
+    encoding='utf-8',
+)
 subprocess.run(
     [sys.executable, '-m', 'pip', 'install', '-q', '-r',
-     str(work / 'requirements_40hd.txt')],
+     str(base_requirements)],
     check=True,
 )
+nvidia_probe = (
+    subprocess.run(
+        ['nvidia-smi', '-L'], capture_output=True, text=True, check=False
+    ) if shutil.which('nvidia-smi') is not None else None
+)
+gpu_runtime = (
+    nvidia_probe is not None and nvidia_probe.returncode == 0
+    and bool(nvidia_probe.stdout.strip())
+)
+
+def install_cpu_paddle():
+    subprocess.run(
+        [sys.executable, '-m', 'pip', 'uninstall', '-y', '-q',
+         'paddlepaddle', 'paddlepaddle-gpu'],
+        check=False,
+    )
+    subprocess.run(
+        [sys.executable, '-m', 'pip', 'install', '-q',
+         'paddlepaddle==3.2.0', '-i',
+         'https://www.paddlepaddle.org.cn/packages/stable/cpu/'],
+        check=True,
+    )
+
+if gpu_runtime:
+    print('Colab có GPU; đang cài PaddlePaddle GPU (CUDA 11.8)', flush=True)
+    subprocess.run(
+        [sys.executable, '-m', 'pip', 'uninstall', '-y', '-q',
+         'paddlepaddle', 'paddlepaddle-gpu'],
+        check=False,
+    )
+    gpu_install = subprocess.run(
+        [sys.executable, '-m', 'pip', 'install', '-q',
+         'paddlepaddle-gpu==3.2.0', '-i',
+         'https://www.paddlepaddle.org.cn/packages/stable/cu118/'],
+        check=False,
+    )
+    paddle_gpu_probe = subprocess.run(
+        [sys.executable, '-c',
+         "import paddle; assert paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0; print('GPU_OK')"],
+        capture_output=True, text=True, check=False,
+    ) if gpu_install.returncode == 0 else None
+    if (paddle_gpu_probe is not None and paddle_gpu_probe.returncode == 0
+            and 'GPU_OK' in paddle_gpu_probe.stdout):
+        print('PaddleOCR dùng GPU; Tesseract vẫn chạy CPU', flush=True)
+    else:
+        print('Paddle GPU không khởi tạo được; chuyển PaddleOCR sang CPU', flush=True)
+        install_cpu_paddle()
+else:
+    print('Colab hiện không cấp GPU; cài PaddlePaddle CPU', flush=True)
+    install_cpu_paddle()
+
+paddle_check = subprocess.run(
+    [sys.executable, '-c',
+     "import paddle; print('CUDA=' + str(paddle.is_compiled_with_cuda()))"],
+    capture_output=True, text=True, check=True,
+)
+print('Thiết bị PaddleOCR:', 'GPU' if 'CUDA=True' in paddle_check.stdout else 'CPU', flush=True)
 language_check = subprocess.run(
     ['tesseract', '--list-langs'], check=True, capture_output=True, text=True
 )
@@ -123,6 +190,7 @@ subprocess.run(
     [sys.executable, '-u', str(work / 'run_40hd_benchmark.py'),
      '--dataset-zip', str(local_bundle),
      '--dpi', '300',
+     '--device', 'auto',
      '--output-dir', str(drive_results),
      '--resume'],
     check=True,
@@ -158,7 +226,8 @@ display(Markdown((drive_results / 'BAO_CAO.md').read_text(encoding='utf-8')))
             "source": [
                 "# So sánh 3 kỹ thuật OCR trên 40 hóa đơn\n",
                 "\n",
-                "Đặt `40HD_colab_bundle.zip` trong `My Drive/SoSachHoaDon`, rồi bấm **Run all**. Cấp quyền Google Drive khi Colab hỏi. Notebook tự cài các thư viện, chạy Tesseract, EasyOCR, PaddleOCR trên cùng 40 PDF ở 300 DPI, dùng chung bộ trích trường để tính Precision, Recall, F1, tạo biểu đồ và lưu toàn bộ kết quả vào Drive.\n",
+                "Đặt `40HD_colab_bundle.zip` trong `My Drive/SoSachHoaDon`, chọn **Runtime → Change runtime type → GPU** nếu Colab cấp GPU, rồi bấm **Run all** bằng tài khoản Colab hiện tại. Cấp quyền Google Drive khi được hỏi. GPU có thể không được cấp; notebook tự chọn GPU khi khả dụng, nếu không thì chạy CPU. Tesseract luôn chạy CPU.\n",
+                "Notebook tự cài thư viện phù hợp, chạy cùng 40 PDF ở 300 DPI, dùng chung bộ trích trường để tính Precision, Recall, F1, tạo biểu đồ và lưu checkpoint/kết quả vào `My Drive/SoSachHoaDon/ket_qua/run_...`. Thiết bị thật của từng OCR được ghi trong `metadata.json`; giữ Colab kết nối đến khi hoàn tất.\n",
                 "\n",
                 "Trong thư mục `ket_qua/run_...`, mở `bao_cao_truc_quan.html` để xem biểu đồ, lọc từng kỹ thuật/hóa đơn/trạng thái và xem giá trị trường nào đúng, sai hoặc thiếu. `chi_tiet_hoa_don.csv` ghi từng giá trị và dòng OCR; `predictions.csv` giữ toàn văn OCR. Tỷ lệ tìm thấy giá trị toàn trang được báo riêng với P/R/F1 của OCR cộng bộ trích trường.\n",
             ],

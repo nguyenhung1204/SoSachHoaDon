@@ -8,8 +8,10 @@ Hiện bộ nhãn có 860 trường: 833 giá trị đã được xác nhận tr
 
 1. Tải `40HD_colab_bundle.zip` ở thư mục gốc repo này lên thư mục `My Drive/SoSachHoaDon` trên Google Drive. Nếu đã clone repo trên máy, ZIP nằm sẵn ở đó; nếu cần tạo lại từ PDF và nhãn cục bộ, chạy `python package_40hd_dataset.py`.
 2. Mở [Google Colab](https://colab.research.google.com/), chọn **File → Upload notebook** và chọn `run_40HD_colab.ipynb`. Nếu bạn đã tải notebook bản cũ lên Drive, hãy thay bằng bản mới; ZIP dữ liệu vẫn dùng nguyên file hiện tại.
-3. Bấm **Run all** hoặc nút chạy của ô code duy nhất. Cấp quyền Google Drive khi Colab hỏi.
-4. Notebook tự cài Tesseract, EasyOCR và PaddleOCR, chạy 40 hóa đơn trên CPU, trích trường bằng cùng một bộ quy tắc rồi hiển thị báo cáo. Kết quả và checkpoint được ghi trực tiếp tại `My Drive/SoSachHoaDon/ket_qua/run_...`; nếu Colab bị ngắt, mở notebook mới nhất và chạy lại để tiếp tục run chưa hoàn tất. Run chỉ được đánh dấu `COMPLETE` sau khi đã tạo báo cáo và ZIP. Khi run đã hoàn tất, lần chạy sau sẽ tạo thư mục run mới.
+3. Chọn **Runtime → Change runtime type → GPU** nếu Colab cấp GPU. Bấm **Run all** hoặc chạy ô code duy nhất bằng tài khoản Colab hiện tại, rồi cấp quyền Google Drive khi được hỏi. Colab không đảm bảo GPU luôn sẵn sàng; nếu không có GPU hoặc GPU không khởi tạo được, notebook tự cài PaddlePaddle CPU và tiếp tục.
+4. Notebook cài Tesseract, EasyOCR và PaddleOCR, rồi chạy 40 hóa đơn ở 300 DPI với `--device auto`. Tesseract luôn chạy CPU; EasyOCR và PaddleOCR tự dùng GPU nếu nhận được, từng engine tự fallback CPU nếu không khởi tạo được. Cùng một bộ quy tắc trích trường được dùng để đánh giá cả ba. Kết quả và checkpoint được ghi trực tiếp tại `My Drive/SoSachHoaDon/ket_qua/run_...`; nếu Colab bị ngắt, mở notebook mới nhất và chạy lại để tiếp tục run chưa hoàn tất. Run chỉ được đánh dấu `COMPLETE` sau khi đã tạo báo cáo và ZIP. Khi run đã hoàn tất, lần chạy sau sẽ tạo thư mục run mới.
+
+Notebook cài PaddlePaddle GPU 3.2.0 theo gói CUDA 11.8 chính thức; nếu bản GPU không cài hoặc không khởi tạo được, nó gỡ bản lỗi và cài PaddlePaddle CPU 3.2.0. Gói chạy thực tế và thiết bị của mỗi engine được ghi trong `metadata.json`; khi so sánh thời gian, cần báo cáo cùng cấu hình vì Tesseract vẫn chạy CPU trong khi hai engine còn lại có thể chạy GPU.
 
 Các thư mục kết quả tạo bởi notebook cũ không có `ocr_regions.jsonl`, nên không thể khôi phục tọa độ từ văn bản OCR đã lưu. Hãy tải `run_40HD_colab.ipynb` mới nhất trong thư mục này lên Colab rồi chạy lại để lấy dữ liệu tọa độ và đánh giá gán trường.
 
@@ -76,4 +78,4 @@ Mở `bao_cao_truc_quan.html` trong thư mục kết quả để xem biểu đ�
 
 Thời gian trung bình là thời gian **chạy OCR mỗi hóa đơn**, không tính bước raster hóa PDF chung cho ba kỹ thuật hay tải model khởi động. Vì cả ba nhận cùng ảnh 300 DPI, số này phù hợp để so sánh tốc độ suy luận OCR; khi báo cáo thời gian từ lúc tải PDF đến kết quả, cần cộng thời gian tiền xử lý và hậu xử lý riêng.
 
-Kết quả Colab chạy trên CPU Colab và không nhất thiết có cùng tốc độ với máy cá nhân. Lần đầu có thể tải các model; hãy ghi lại môi trường trong `metadata.json` khi trích số liệu vào báo cáo.
+Kết quả Colab có thể chạy GPU hoặc CPU tùy thiết bị được cấp và khởi tạo thành công; không nhất thiết có cùng tốc độ với máy cá nhân. Lần đầu có thể tải các model; hãy ghi lại môi trường và thiết bị trong `metadata.json` khi trích số liệu vào báo cáo.
