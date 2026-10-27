@@ -1,5 +1,6 @@
 # Dữ liệu cá nhân và kết quả chạy
 *.zip
+!40HD_colab_bundle.zip
 *.pdf
 40HD.json
 ground_truth.csv

@@ -6,7 +6,7 @@ Hiện bộ nhãn có 860 trường: 833 giá trị đã được xác nhận tr
 
 ## Chạy nhanh trên Google Colab
 
-1. Trên Google Drive, tạo thư mục `My Drive/SoSachHoaDon` và tải `40HD_colab_bundle.zip` vào đó. Nếu cần tạo lại ZIP từ dữ liệu cục bộ, chạy `python package_40hd_dataset.py`.
+1. Tải `40HD_colab_bundle.zip` ở thư mục gốc repo này lên thư mục `My Drive/SoSachHoaDon` trên Google Drive. Nếu đã clone repo trên máy, ZIP nằm sẵn ở đó; nếu cần tạo lại từ PDF và nhãn cục bộ, chạy `python package_40hd_dataset.py`.
 2. Mở [Google Colab](https://colab.research.google.com/), chọn **File → Upload notebook** và chọn `run_40HD_colab.ipynb`. Nếu bạn đã tải notebook bản cũ lên Drive, hãy thay bằng bản mới; ZIP dữ liệu vẫn dùng nguyên file hiện tại.
 3. Bấm **Run all** hoặc nút chạy của ô code duy nhất. Cấp quyền Google Drive khi Colab hỏi.
 4. Notebook tự cài Tesseract, EasyOCR và PaddleOCR, chạy 40 hóa đơn trên CPU, trích trường bằng cùng một bộ quy tắc rồi hiển thị báo cáo. Kết quả và checkpoint được ghi trực tiếp tại `My Drive/SoSachHoaDon/ket_qua/run_...`; nếu Colab bị ngắt, mở notebook mới nhất và chạy lại để tiếp tục run chưa hoàn tất. Run chỉ được đánh dấu `COMPLETE` sau khi đã tạo báo cáo và ZIP. Khi run đã hoàn tất, lần chạy sau sẽ tạo thư mục run mới.
@@ -29,7 +29,7 @@ Nếu Tesseract không có trong `PATH`, truyền `--tesseract-cmd C:\path\to\te
 
 ### Chạy trên Windows với NVIDIA GTX 1050
 
-1. Tải `40HD_colab_bundle.zip` từ thư mục Google Drive `SoSachHoaDon` và đặt cạnh `run_40hd_benchmark.py`. Cài Python 3.10 64-bit, Tesseract OCR kèm ngôn ngữ `vie` và `eng`, cùng driver NVIDIA đủ mới; kiểm tra GPU bằng `nvidia-smi`.
+1. Dùng `40HD_colab_bundle.zip` ở thư mục gốc repo (đã có sau khi clone) và đặt cạnh `run_40hd_benchmark.py`. Cài Python 3.10 64-bit, Tesseract OCR kèm ngôn ngữ `vie` và `eng`, cùng driver NVIDIA đủ mới; kiểm tra GPU bằng `nvidia-smi`.
 2. Tạo môi trường riêng và cài thư viện nền:
 
 ```powershell
