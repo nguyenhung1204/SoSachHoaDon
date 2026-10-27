@@ -6,10 +6,10 @@ Hiện bộ nhãn có 860 trường: 833 giá trị đã được xác nhận tr
 
 ## Chạy nhanh trên Google Colab
 
-1. Trên Google Drive, tạo thư mục `My Drive/SoSanhOCR_40HD` và tải `40HD_colab_bundle.zip` vào đó. Nếu cần tạo lại ZIP từ dữ liệu cục bộ, chạy `python package_40hd_dataset.py`.
+1. Trên Google Drive, tạo thư mục `My Drive/SoSachHoaDon` và tải `40HD_colab_bundle.zip` vào đó. Nếu cần tạo lại ZIP từ dữ liệu cục bộ, chạy `python package_40hd_dataset.py`.
 2. Mở [Google Colab](https://colab.research.google.com/), chọn **File → Upload notebook** và chọn `run_40HD_colab.ipynb`. Nếu bạn đã tải notebook bản cũ lên Drive, hãy thay bằng bản mới; ZIP dữ liệu vẫn dùng nguyên file hiện tại.
 3. Bấm **Run all** hoặc nút chạy của ô code duy nhất. Cấp quyền Google Drive khi Colab hỏi.
-4. Notebook tự cài Tesseract, EasyOCR và PaddleOCR, chạy 40 hóa đơn trên CPU, trích trường bằng cùng một bộ quy tắc rồi hiển thị báo cáo. Kết quả và checkpoint được ghi trực tiếp tại `My Drive/SoSanhOCR_40HD/ket_qua/run_...`; nếu Colab bị ngắt, mở notebook mới nhất và chạy lại để tiếp tục run chưa hoàn tất. Run chỉ được đánh dấu `COMPLETE` sau khi đã tạo báo cáo và ZIP. Khi run đã hoàn tất, lần chạy sau sẽ tạo thư mục run mới.
+4. Notebook tự cài Tesseract, EasyOCR và PaddleOCR, chạy 40 hóa đơn trên CPU, trích trường bằng cùng một bộ quy tắc rồi hiển thị báo cáo. Kết quả và checkpoint được ghi trực tiếp tại `My Drive/SoSachHoaDon/ket_qua/run_...`; nếu Colab bị ngắt, mở notebook mới nhất và chạy lại để tiếp tục run chưa hoàn tất. Run chỉ được đánh dấu `COMPLETE` sau khi đã tạo báo cáo và ZIP. Khi run đã hoàn tất, lần chạy sau sẽ tạo thư mục run mới.
 
 Các thư mục kết quả tạo bởi notebook cũ không có `ocr_regions.jsonl`, nên không thể khôi phục tọa độ từ văn bản OCR đã lưu. Hãy tải `run_40HD_colab.ipynb` mới nhất trong thư mục này lên Colab rồi chạy lại để lấy dữ liệu tọa độ và đánh giá gán trường.
 

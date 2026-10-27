@@ -35,10 +35,10 @@ import sys
 
 # Chỉ cần để ZIP trong thư mục này trên Google Drive.
 drive.mount('/content/drive')
-drive_bundle = Path('/content/drive/MyDrive/SoSanhOCR_40HD/40HD_colab_bundle.zip')
+drive_bundle = Path('/content/drive/MyDrive/SoSachHoaDon/40HD_colab_bundle.zip')
 if not drive_bundle.is_file():
     raise FileNotFoundError(
-        'Không thấy 40HD_colab_bundle.zip trong My Drive/SoSanhOCR_40HD. '
+        'Không thấy 40HD_colab_bundle.zip trong My Drive/SoSachHoaDon. '
         f'Đường dẫn đã kiểm tra: {drive_bundle}'
     )
 
@@ -85,7 +85,7 @@ if not {'eng', 'vie'} <= languages:
 print('Đã cài xong và có đủ ngôn ngữ eng/vie', flush=True)
 
 print('3/4 · Chạy 3 OCR và đánh giá 40 hóa đơn; hãy giữ Colab kết nối', flush=True)
-drive_results_root = Path('/content/drive/MyDrive/SoSanhOCR_40HD/ket_qua')
+drive_results_root = Path('/content/drive/MyDrive/SoSachHoaDon/ket_qua')
 drive_results_root.mkdir(parents=True, exist_ok=True)
 active_run_file = drive_results_root / '.active_run'
 try:
@@ -153,7 +153,7 @@ display(Markdown((drive_results / 'BAO_CAO.md').read_text(encoding='utf-8')))
             "source": [
                 "# So sánh 3 kỹ thuật OCR trên 40 hóa đơn\n",
                 "\n",
-                "Đặt `40HD_colab_bundle.zip` trong `My Drive/SoSanhOCR_40HD`, rồi bấm **Run all**. Cấp quyền Google Drive khi Colab hỏi. Notebook tự cài các thư viện, chạy Tesseract, EasyOCR, PaddleOCR trên cùng 40 PDF ở 300 DPI, dùng chung bộ trích trường để tính Precision, Recall, F1, tạo biểu đồ và lưu toàn bộ kết quả vào Drive.\n",
+                "Đặt `40HD_colab_bundle.zip` trong `My Drive/SoSachHoaDon`, rồi bấm **Run all**. Cấp quyền Google Drive khi Colab hỏi. Notebook tự cài các thư viện, chạy Tesseract, EasyOCR, PaddleOCR trên cùng 40 PDF ở 300 DPI, dùng chung bộ trích trường để tính Precision, Recall, F1, tạo biểu đồ và lưu toàn bộ kết quả vào Drive.\n",
                 "\n",
                 "Trong thư mục `ket_qua/run_...`, mở `bao_cao_truc_quan.html` để xem biểu đồ, lọc từng kỹ thuật/hóa đơn/trạng thái và xem giá trị trường nào đúng, sai hoặc thiếu. `chi_tiet_hoa_don.csv` ghi từng giá trị và dòng OCR; `predictions.csv` giữ toàn văn OCR. Tỷ lệ tìm thấy giá trị toàn trang được báo riêng với P/R/F1 của OCR cộng bộ trích trường.\n",
             ],

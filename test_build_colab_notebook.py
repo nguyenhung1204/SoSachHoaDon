@@ -58,7 +58,7 @@ class NotebookBuilderTests(unittest.TestCase):
 
         compile(code, "<generated colab cell>", "exec")
 
-        self.assertIn("drive_results_root = Path('/content/drive/MyDrive/SoSanhOCR_40HD/ket_qua')", code)
+        self.assertIn("drive_results_root = Path('/content/drive/MyDrive/SoSachHoaDon/ket_qua')", code)
         self.assertIn("'--output-dir', str(drive_results)", code)
         self.assertIn("'--resume'", code)
         self.assertIn("ocr_regions.jsonl", code)

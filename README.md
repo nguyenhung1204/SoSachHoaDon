@@ -6,10 +6,10 @@ Bộ mã so sánh Tesseract, EasyOCR và PaddleOCR trên cùng 40 hóa đơn. Qu
 
 Dữ liệu hóa đơn và nhãn không nằm trên GitHub. Giữ `40HD_colab_bundle.zip` trong Google Drive riêng của bạn.
 
-1. Trên Drive, tạo `My Drive/SoSanhOCR_40HD` và tải `40HD_colab_bundle.zip` vào thư mục đó.
+1. Trên Drive, tạo `My Drive/SoSachHoaDon` và tải `40HD_colab_bundle.zip` vào thư mục đó.
 2. Mở [notebook chạy 40 hóa đơn trên Colab](https://colab.research.google.com/github/nguyenhung1204/SoSachHoaDon/blob/main/run_40HD_colab.ipynb).
 3. Bấm **Run all** và cấp quyền Google Drive khi được hỏi. Lần đầu Colab sẽ cài OCR và tải model; hãy giữ phiên Colab kết nối đến khi hoàn tất.
-4. Mở `My Drive/SoSanhOCR_40HD/ket_qua/run_.../bao_cao_truc_quan.html` để xem biểu đồ và lọc từng hóa đơn/trường. File CSV chi tiết và ZIP kết quả cũng nằm trong cùng thư mục run.
+4. Mở `My Drive/SoSachHoaDon/ket_qua/run_.../bao_cao_truc_quan.html` để xem biểu đồ và lọc từng hóa đơn/trường. File CSV chi tiết và ZIP kết quả cũng nằm trong cùng thư mục run.
 
 Notebook ghi checkpoint trực tiếp vào Drive. Nếu Colab bị ngắt giữa chừng, chạy lại notebook để tiếp tục run chưa hoàn tất. Run hoàn chỉnh được đánh dấu bằng file `COMPLETE`.
 
