@@ -18,6 +18,7 @@ import struct
 import tempfile
 import time
 import unicodedata
+import warnings
 import zipfile
 from collections import defaultdict
 from datetime import date, datetime
@@ -463,7 +464,78 @@ def regions_to_text(regions: list[dict]) -> str:
     return "\n".join(line for line in text_lines if line)
 
 
-def load_engines(tesseract_lang: str, tesseract_cmd: str | None = None):
+def resolve_ocr_devices(requested: str, *, easyocr_gpu_available: bool,
+                        paddle_gpu_available: bool) -> dict[str, str]:
+    if requested not in {"cpu", "auto", "gpu"}:
+        raise ValueError("device must be one of: cpu, auto, gpu")
+    available = {"easyocr": easyocr_gpu_available, "paddleocr": paddle_gpu_available}
+    if requested == "gpu" and not all(available.values()):
+        raise RuntimeError("GPU mode requires CUDA-enabled EasyOCR and PaddleOCR")
+    return {
+        "tesseract": "cpu",
+        "easyocr": "cuda" if requested != "cpu" and easyocr_gpu_available else "cpu",
+        "paddleocr": "gpu:0" if requested != "cpu" and paddle_gpu_available else "cpu",
+    }
+
+
+def _easyocr_gpu_available() -> bool:
+    try:
+        import torch
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+def _paddle_gpu_available() -> bool:
+    try:
+        import paddle
+        return bool(paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0)
+    except Exception:
+        return False
+
+
+def _lazy_engine(factory, engine_name: str, selected_device: str, allow_gpu_fallback: bool):
+    state: dict[str, Any] = {"recognizer": None, "device": selected_device}
+
+    def clear_gpu_cache() -> None:
+        try:
+            if engine_name == "easyocr":
+                import torch
+                torch.cuda.empty_cache()
+            elif engine_name == "paddleocr":
+                import paddle
+                paddle.device.cuda.empty_cache()
+        except Exception:
+            pass
+
+    def recognize(image_path: Path) -> list[dict]:
+        if state["recognizer"] is None:
+            try:
+                state["recognizer"] = factory(state["device"])
+            except Exception as exc:
+                if not allow_gpu_fallback or state["device"] == "cpu":
+                    raise
+                clear_gpu_cache()
+                warnings.warn(
+                    f"{engine_name} GPU initialization failed; falling back to CPU: {exc}",
+                    RuntimeWarning,
+                )
+                state["device"] = "cpu"
+                state["recognizer"] = factory("cpu")
+            recognize.device = state["device"]
+        return state["recognizer"](image_path)
+
+    def release() -> None:
+        state["recognizer"] = None
+        clear_gpu_cache()
+
+    recognize.device = selected_device
+    recognize.release = release
+    return recognize
+
+
+def load_engines(tesseract_lang: str, tesseract_cmd: str | None = None,
+                 device: str = "cpu"):
     try:
         import pytesseract
     except ImportError as exc:
@@ -481,21 +553,44 @@ def load_engines(tesseract_lang: str, tesseract_cmd: str | None = None):
     except ImportError as exc:
         raise RuntimeError("Missing EasyOCR; install requirements_40hd.txt first") from exc
 
-    easy_reader = easyocr.Reader(["vi", "en"], gpu=False, verbose=False)
-
     try:
+        import paddle
         from paddleocr import PaddleOCR
     except ImportError as exc:
         raise RuntimeError("Missing PaddleOCR/PaddlePaddle; install requirements_40hd.txt first") from exc
 
-    paddle_reader = PaddleOCR(
-        lang="vi",
-        device="cpu",
-        enable_mkldnn=False,
-        use_doc_orientation_classify=False,
-        use_doc_unwarping=False,
-        use_textline_orientation=False,
+    devices = resolve_ocr_devices(
+        device,
+        easyocr_gpu_available=_easyocr_gpu_available(),
+        paddle_gpu_available=_paddle_gpu_available(),
     )
+
+    def build_easy(selected_device: str):
+        reader = easyocr.Reader(["vi", "en"], gpu=selected_device == "cuda", verbose=False)
+
+        def recognize(image_path: Path) -> list[dict]:
+            blocks = reader.readtext(str(image_path), detail=1, paragraph=False)
+            return normalize_engine_regions("easyocr", blocks)
+
+        return recognize
+
+    def build_paddle(selected_device: str):
+        reader = PaddleOCR(
+            lang="vi",
+            device=selected_device,
+            enable_mkldnn=False,
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+        )
+
+        def recognize(image_path: Path) -> list[dict]:
+            regions: list[dict] = []
+            for result in reader.predict(str(image_path)):
+                regions.extend(normalize_engine_regions("paddleocr", result))
+            return sorted(regions, key=lambda row: (row["bbox"][1], row["bbox"][0]))
+
+        return recognize
 
     def tesseract(image_path: Path) -> list[dict]:
         raw = pytesseract.image_to_data(
@@ -504,17 +599,13 @@ def load_engines(tesseract_lang: str, tesseract_cmd: str | None = None):
         )
         return normalize_engine_regions("tesseract", raw)
 
-    def easy(image_path: Path) -> list[dict]:
-        blocks = easy_reader.readtext(str(image_path), detail=1, paragraph=False)
-        return normalize_engine_regions("easyocr", blocks)
-
-    def paddle(image_path: Path) -> list[dict]:
-        regions: list[dict] = []
-        for result in paddle_reader.predict(str(image_path)):
-            regions.extend(normalize_engine_regions("paddleocr", result))
-        return sorted(regions, key=lambda row: (row["bbox"][1], row["bbox"][0]))
-
-    return {"tesseract": tesseract, "easyocr": easy, "paddleocr": paddle}
+    tesseract.device = "cpu"
+    tesseract.release = lambda: None
+    return {
+        "tesseract": tesseract,
+        "easyocr": _lazy_engine(build_easy, "easyocr", devices["easyocr"], device == "auto"),
+        "paddleocr": _lazy_engine(build_paddle, "paddleocr", devices["paddleocr"], device == "auto"),
+    }
 
 
 def package_version(name: str) -> str:
@@ -588,7 +679,7 @@ def _file_sha256(path: Path) -> str:
 
 
 def _engine_fingerprint(engine_name: str, tesseract_lang: str,
-                        tesseract_cmd: str | None) -> str:
+                        tesseract_cmd: str | None, device: str = "cpu") -> str:
     package_names = {
         "tesseract": ("pytesseract",),
         "easyocr": ("easyocr", "torch", "torchvision"),
@@ -601,9 +692,9 @@ def _engine_fingerprint(engine_name: str, tesseract_lang: str,
             "languages": tesseract_lang,
             "config": "--oem 1 --psm 3",
         },
-        "easyocr": {"languages": ["vi", "en"], "device": "cpu",
+        "easyocr": {"languages": ["vi", "en"], "device": device,
                     "detail": 1, "paragraph": False, "verbose": False},
-        "paddleocr": {"language": "vi", "device": "cpu", "enable_mkldnn": False,
+        "paddleocr": {"language": "vi", "device": device, "enable_mkldnn": False,
                       "use_doc_orientation_classify": False,
                       "use_doc_unwarping": False, "use_textline_orientation": False},
     }
@@ -620,8 +711,8 @@ def _engine_fingerprint(engine_name: str, tesseract_lang: str,
 
 def run_benchmark(dataset: dict, values: list[dict], pdf_root: Path, output_dir: Path,
                   dpi: int, tesseract_lang: str, tesseract_cmd: str | None = None,
-                  resume: bool = False) -> Path:
-    engines = load_engines(tesseract_lang, tesseract_cmd)
+                  resume: bool = False, device: str = "cpu") -> Path:
+    engines = load_engines(tesseract_lang, tesseract_cmd, device=device)
     output_dir.mkdir(parents=True, exist_ok=True)
     invoice_values = defaultdict(list)
     for value in values:
@@ -634,14 +725,12 @@ def run_benchmark(dataset: dict, values: list[dict], pdf_root: Path, output_dir:
     result_by_pair: dict[tuple[str, str], dict] = {}
     texts: dict[tuple[str, str], list[str]] = defaultdict(list)
     region_records: list[dict] = []
+    engine_devices: dict[str, str] = {}
     pdf_hashes = {
         invoice["pdf"]: _file_sha256(Path(pdf_root) / invoice["pdf"])
         for invoice in dataset["invoices"]
     }
-    engine_fingerprints = {
-        name: _engine_fingerprint(name, tesseract_lang, tesseract_cmd)
-        for name in engines
-    }
+    engine_fingerprints: dict[str, str] = {}
 
     with tempfile.TemporaryDirectory(prefix="40hd-ocr-render-") as temp_name:
         render_root = Path(temp_name)
@@ -655,63 +744,73 @@ def run_benchmark(dataset: dict, values: list[dict], pdf_root: Path, output_dir:
 
         first_image = rendered[dataset["invoices"][0]["pdf"]][0]
         for engine_name, engine in engines.items():
-            engine(first_image)  # warm-up; not included in inference timings
+            try:
+                engine(first_image)  # warm-up; not included in inference timings
+                engine_device = getattr(engine, "device", "cpu")
+                engine_devices[engine_name] = engine_device
+                engine_fingerprints[engine_name] = _engine_fingerprint(
+                    engine_name, tesseract_lang, tesseract_cmd, engine_device
+                )
 
-        for invoice in dataset["invoices"]:
-            filename = invoice["pdf"]
-            for engine_name, engine in engines.items():
-                checkpoint = _checkpoint_file(output_dir, engine_name, invoice["id"])
-                cached = None
-                if resume and checkpoint.is_file():
-                    candidate = _read_checkpoint(checkpoint)
-                    if (candidate and candidate.get("schema_version") == CHECKPOINT_SCHEMA_VERSION
-                            and candidate.get("engine") == engine_name
-                            and candidate.get("invoice_id") == invoice["id"]
-                            and candidate.get("pdf") == filename
-                            and candidate.get("dpi") == dpi
-                            and candidate.get("tesseract_lang") == tesseract_lang
-                            and candidate.get("source_pdf_sha256") == pdf_hashes[filename]
-                            and candidate.get("engine_fingerprint") == engine_fingerprints[engine_name]
-                            and len(candidate.get("pages", [])) == len(rendered[filename])):
-                        cached = candidate
+                for invoice in dataset["invoices"]:
+                    filename = invoice["pdf"]
+                    checkpoint = _checkpoint_file(output_dir, engine_name, invoice["id"])
+                    cached = None
+                    if resume and checkpoint.is_file():
+                        candidate = _read_checkpoint(checkpoint)
+                        if (candidate and candidate.get("schema_version") == CHECKPOINT_SCHEMA_VERSION
+                                and candidate.get("engine") == engine_name
+                                and candidate.get("invoice_id") == invoice["id"]
+                                and candidate.get("pdf") == filename
+                                and candidate.get("dpi") == dpi
+                                and candidate.get("tesseract_lang") == tesseract_lang
+                                and candidate.get("source_pdf_sha256") == pdf_hashes[filename]
+                                and candidate.get("engine_fingerprint") == engine_fingerprints[engine_name]
+                                and len(candidate.get("pages", [])) == len(rendered[filename])):
+                            cached = candidate
 
-                if cached is None:
-                    pages: list[dict] = []
-                    elapsed_total = 0.0
-                    for page_number, image_path in enumerate(rendered[filename], start=1):
-                        started = time.perf_counter()
-                        regions = engine(image_path)
-                        elapsed_total += time.perf_counter() - started
-                        width, height = _image_dimensions(image_path)
-                        page_text = regions_to_text(regions)
-                        pages.append({
-                            "engine": engine_name, "invoice_id": invoice["id"],
-                            "pdf": filename, "page": page_number,
-                            "width": width, "height": height, "regions": regions,
-                            "ocr_text": page_text,
-                        })
-                    result = {
-                        "schema_version": CHECKPOINT_SCHEMA_VERSION, "engine": engine_name,
-                        "invoice_id": invoice["id"], "pdf": filename,
-                        "dpi": dpi, "tesseract_lang": tesseract_lang,
-                        "source_pdf_sha256": pdf_hashes[filename],
-                        "engine_fingerprint": engine_fingerprints[engine_name],
-                        "inference_seconds": round(elapsed_total, 4),
-                        "pages": pages,
-                        "ocr_text": "\n\n".join(page["ocr_text"] for page in pages),
-                    }
-                    _write_checkpoint(checkpoint, result)
-                else:
-                    result = cached
-                result_by_pair[(engine_name, filename)] = result
-                invoice_times[(engine_name, filename)] = float(result["inference_seconds"])
-                texts[(engine_name, filename)] = [page["ocr_text"] for page in result["pages"]]
+                    if cached is None:
+                        pages: list[dict] = []
+                        elapsed_total = 0.0
+                        for page_number, image_path in enumerate(rendered[filename], start=1):
+                            started = time.perf_counter()
+                            regions = engine(image_path)
+                            elapsed_total += time.perf_counter() - started
+                            width, height = _image_dimensions(image_path)
+                            page_text = regions_to_text(regions)
+                            pages.append({
+                                "engine": engine_name, "invoice_id": invoice["id"],
+                                "pdf": filename, "page": page_number,
+                                "width": width, "height": height, "regions": regions,
+                                "ocr_text": page_text,
+                            })
+                        result = {
+                            "schema_version": CHECKPOINT_SCHEMA_VERSION, "engine": engine_name,
+                            "invoice_id": invoice["id"], "pdf": filename,
+                            "dpi": dpi, "tesseract_lang": tesseract_lang,
+                            "source_pdf_sha256": pdf_hashes[filename],
+                            "engine_fingerprint": engine_fingerprints[engine_name],
+                            "inference_seconds": round(elapsed_total, 4),
+                            "pages": pages,
+                            "ocr_text": "\n\n".join(page["ocr_text"] for page in pages),
+                        }
+                        _write_checkpoint(checkpoint, result)
+                    else:
+                        result = cached
+                    result_by_pair[(engine_name, filename)] = result
+                    invoice_times[(engine_name, filename)] = float(result["inference_seconds"])
+                    texts[(engine_name, filename)] = [page["ocr_text"] for page in result["pages"]]
+            finally:
+                release = getattr(engine, "release", None)
+                if callable(release):
+                    release()
 
     for engine_name in ENGINES:
         for invoice in dataset["invoices"]:
             result = result_by_pair[(engine_name, invoice["pdf"])]
             prediction_rows.append({
                 "engine": engine_name, "invoice_id": invoice["id"],
+                "device": engine_devices.get(engine_name, "cpu"),
                 "pdf": invoice["pdf"], "pages": len(result["pages"]),
                 "inference_seconds": result["inference_seconds"],
                 "ocr_text": result["ocr_text"],
@@ -759,6 +858,7 @@ def run_benchmark(dataset: dict, values: list[dict], pdf_root: Path, output_dir:
             hits = sum(row["exact_value_found"] for row in subset)
             invoice_summary.append({
                 "engine": engine_name,
+                "device": engine_devices.get(engine_name, "cpu"),
                 "invoice_id": invoice["id"],
                 "pdf": invoice["pdf"],
                 "confirmed_values": len(subset),
@@ -777,6 +877,7 @@ def run_benchmark(dataset: dict, values: list[dict], pdf_root: Path, output_dir:
         fully_found = sum(rate == 1 for rate in invoice_rates)
         summary.append({
             "engine": engine_name,
+            "device": engine_devices.get(engine_name, "cpu"),
             "invoices": len(dataset["invoices"]),
             "pages": total_pages,
             "confirmed_values": len(subset),
@@ -805,15 +906,21 @@ def run_benchmark(dataset: dict, values: list[dict], pdf_root: Path, output_dir:
         "dataset": "40HD",
         "invoice_count": len(dataset["invoices"]),
         "positive_confirmed_values_scored": len(values),
+        "requested_device": device,
+        "engine_devices": engine_devices,
         "status_counts": dict(status_counts),
         "engines": {
             "tesseract": {"package": package_version("pytesseract"),
                           "runtime_version": tesseract_runtime_version(tesseract_cmd),
                           "language": tesseract_lang,
                           "binary": tesseract_cmd or shutil.which("tesseract") or "tesseract"},
-            "easyocr": {"package": package_version("easyocr"), "languages": ["vi", "en"], "device": "CPU"},
-            "paddleocr": {"package": package_version("paddleocr"), "language": "vi", "device": "CPU"},
-            "paddlepaddle": {"package": package_version("paddlepaddle")},
+            "easyocr": {"package": package_version("easyocr"), "languages": ["vi", "en"],
+                        "device": engine_devices.get("easyocr", "cpu")},
+            "paddleocr": {"package": package_version("paddleocr"), "language": "vi",
+                          "device": engine_devices.get("paddleocr", "cpu")},
+            "paddlepaddle": {"package": package_version("paddlepaddle-gpu")
+                             if package_version("paddlepaddle-gpu") != "not-installed"
+                             else package_version("paddlepaddle")},
         },
         "rendering": {"dpi": dpi, "library": "pypdfium2", "library_version": package_version("pypdfium2")},
         "ocr_region_schema": {"version": 1, "bbox": "pixel xyxy relative to the rendered page"},
@@ -828,7 +935,10 @@ def run_benchmark(dataset: dict, values: list[dict], pdf_root: Path, output_dir:
         "",
         f"- Hóa đơn: {len(dataset['invoices'])}",
         f"- Giá trị chuẩn đã xác nhận và được chấm: {len(values)}",
-        f"- Tiền xử lý: rasterize cùng PDF ở {dpi} DPI bằng pypdfium2; cả ba chạy CPU.",
+        f"- Tiền xử lý: rasterize cùng PDF ở {dpi} DPI bằng pypdfium2.",
+        "- Thiết bị OCR: " + "; ".join(
+            f"{name}={engine_devices.get(name, 'cpu')}" for name in ENGINES
+        ) + ".",
         "- Điểm đo trong phần này: tỷ lệ giá trị chuẩn hóa xuất hiện trong OCR toàn trang; kết quả gán trường và dòng được báo riêng.",
         "- Các nhãn 'Không có trên hóa đơn', 'Không áp dụng', nhãn trống và 'Cần đọc từ PDF' không được tính là giá trị đúng.",
         "",
@@ -866,7 +976,7 @@ def default_paths() -> tuple[Path, Path]:
     )
 
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-json", type=Path, help="Path to 40HD.json")
     parser.add_argument("--pdf-root", type=Path, help="Folder containing the 40 source PDFs")
@@ -877,7 +987,15 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true", help="Reuse completed engine/invoice checkpoints in the output directory")
     parser.add_argument("--tesseract-lang", default="vie+eng")
     parser.add_argument("--tesseract-cmd", help="Optional path to the Tesseract executable")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--device", choices=("cpu", "auto", "gpu"), default="cpu",
+        help="OCR device for EasyOCR/PaddleOCR; Tesseract always uses CPU",
+    )
+    return parser
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
 
     default_json, default_pdf_root = default_paths()
     temp = tempfile.TemporaryDirectory(prefix="40hd-dataset-") if args.dataset_zip else None
@@ -896,6 +1014,7 @@ def main() -> None:
         out = run_benchmark(
             dataset, values, pdf_root, args.output_dir, args.dpi,
             args.tesseract_lang, args.tesseract_cmd, resume=args.resume,
+            device=args.device,
         )
         print(f"Completed: {len(dataset['invoices'])} invoices, {len(values)} confirmed values")
         print(f"Results: {out.resolve()}")

@@ -1,6 +1,6 @@
 # So sánh 3 kỹ thuật OCR trên 40 hóa đơn
 
-Bộ chạy này dùng `40HD.json` và đúng 40 PDF được gán nhãn. Nó so sánh Tesseract (`vie+eng`), EasyOCR (`vi`, `en`) và PaddleOCR (`vi`), cùng ảnh raster hóa ở 300 DPI, CPU.
+Bộ chạy này dùng `40HD.json` và đúng 40 PDF được gán nhãn. Nó so sánh Tesseract (`vie+eng`), EasyOCR (`vi`, `en`) và PaddleOCR (`vi`) trên cùng ảnh raster hóa ở 300 DPI. Mặc định chạy CPU để kết quả cũ không đổi; chạy local có thể chọn tự nhận GPU cho EasyOCR/PaddleOCR bằng `--device auto`. Tesseract luôn chạy CPU.
 
 Hiện bộ nhãn có 860 trường: 833 giá trị đã được xác nhận trên PDF, 16 trường đánh dấu không có trên hóa đơn, 10 trường không áp dụng và 1 trường còn chờ đọc. Chỉ 833 giá trị đã xác nhận được đưa vào mẫu số; giá trị `raw` được dùng làm dự phòng khi `normalized` để trống.
 
@@ -26,6 +26,40 @@ python run_40hd_benchmark.py --output-dir results/40hd_full
 ```
 
 Nếu Tesseract không có trong `PATH`, truyền `--tesseract-cmd C:\path\to\tesseract.exe`.
+
+### Chạy trên Windows với NVIDIA GTX 1050
+
+1. Tải `40HD_colab_bundle.zip` từ thư mục Google Drive `SoSachHoaDon` và đặt cạnh `run_40hd_benchmark.py`. Cài Python 3.10 64-bit, Tesseract OCR kèm ngôn ngữ `vie` và `eng`, cùng driver NVIDIA đủ mới; kiểm tra GPU bằng `nvidia-smi`.
+2. Tạo môi trường riêng và cài thư viện nền:
+
+```powershell
+py -3.10 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements_40hd.txt
+```
+
+3. Để dùng GPU, thay PyTorch/Paddle CPU bằng bản CUDA 11.8 (làm trong môi trường `.venv`):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu118
+.\.venv\Scripts\python.exe -m pip uninstall -y paddlepaddle
+.\.venv\Scripts\python.exe -m pip install paddlepaddle-gpu==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
+.\.venv\Scripts\python.exe -c "import torch,paddle; print('PyTorch CUDA:', torch.cuda.is_available()); print('Paddle CUDA:', paddle.is_compiled_with_cuda(), paddle.device.cuda.device_count())"
+```
+
+4. Chạy thử một hóa đơn trước:
+
+```powershell
+.\.venv\Scripts\python.exe run_40hd_benchmark.py --dataset-zip 40HD_colab_bundle.zip --limit 1 --device auto --output-dir ket_qua\kiem_tra
+```
+
+Nếu chạy thử xong, chạy đủ 40 hóa đơn:
+
+```powershell
+.\.venv\Scripts\python.exe run_40hd_benchmark.py --dataset-zip 40HD_colab_bundle.zip --device auto --resume --output-dir ket_qua\gtx1050
+```
+
+`auto` bật GPU riêng cho từng engine nếu PyTorch/Paddle nhận CUDA; nếu không nhận được hoặc model không khởi tạo được vì thiếu VRAM, engine đó tự chuyển sang CPU và ghi thiết bị thực tế vào `metadata.json`, `summary.csv` và `BAO_CAO.md`. Mỗi engine được giải phóng trước khi nạp engine kế tiếp để giảm áp lực VRAM. Nếu hết bộ nhớ GPU giữa lúc nhận dạng, chạy lại với `--device cpu --resume`; checkpoint GPU sẽ tự được tính lại theo cấu hình CPU. Kết quả mặc định nằm trong `ket_qua\gtx1050`; để lưu vào Google Drive, đặt `--output-dir` trỏ tới thư mục Google Drive for Desktop đã đồng bộ trên PC.
 
 ## Cách đọc điểm
 

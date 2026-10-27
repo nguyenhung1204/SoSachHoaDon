@@ -1,15 +1,20 @@
 import base64
 import csv
+import inspect
 import json
 import tempfile
 import unittest
+from types import SimpleNamespace
 from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
+import sys
 
+import run_40hd_benchmark as benchmark
 from run_40hd_benchmark import (
     default_paths,
     iter_confirmed_values,
+    load_engines,
     load_dataset,
     normalize_engine_regions,
     regions_to_text,
@@ -257,6 +262,132 @@ class FortyHdBenchmarkTests(unittest.TestCase):
     def test_date_and_formatted_money_match_the_printed_value(self):
         self.assertTrue(value_found("invoice_date", "2022-10-09", "Ngày 09/10/2022"))
         self.assertTrue(value_found("total_amount", "780000", "Tổng thanh toán: 780.000 đ"))
+
+    def test_auto_device_uses_available_gpu_per_engine_and_cpu_for_tesseract(self):
+        resolver = getattr(benchmark, "resolve_ocr_devices", None)
+        self.assertTrue(callable(resolver), "runner must expose GPU/CPU device selection")
+        self.assertEqual(
+            resolver("auto", easyocr_gpu_available=True, paddle_gpu_available=False),
+            {"tesseract": "cpu", "easyocr": "cuda", "paddleocr": "cpu"},
+        )
+
+    def test_gpu_device_request_requires_both_gpu_ocr_backends(self):
+        resolver = getattr(benchmark, "resolve_ocr_devices", None)
+        self.assertTrue(callable(resolver), "runner must expose GPU/CPU device selection")
+        with self.assertRaisesRegex(RuntimeError, "EasyOCR and PaddleOCR"):
+            resolver("gpu", easyocr_gpu_available=True, paddle_gpu_available=False)
+
+    def test_cli_accepts_auto_device_mode(self):
+        parser_factory = getattr(benchmark, "build_arg_parser", None)
+        self.assertTrue(callable(parser_factory), "CLI must expose its supported device modes")
+        self.assertEqual(parser_factory().parse_args(["--device", "auto"]).device, "auto")
+
+    def test_load_engines_lazily_releases_one_gpu_model_before_reloading(self):
+        self.assertIn("device", inspect.signature(load_engines).parameters)
+        constructed = []
+
+        class FakeEasyReader:
+            def __init__(self, languages, gpu, verbose):
+                constructed.append(("easyocr", gpu))
+
+            def readtext(self, path, detail, paragraph):
+                return []
+
+        class FakePaddleReader:
+            def __init__(self, **kwargs):
+                constructed.append(("paddleocr", kwargs["device"]))
+
+            def predict(self, path):
+                return []
+
+        fake_modules = {
+            "pytesseract": SimpleNamespace(
+                pytesseract=SimpleNamespace(tesseract_cmd=None),
+                get_languages=lambda config: ["eng", "vie"],
+                Output=SimpleNamespace(DICT="dict"),
+            ),
+            "torch": SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True)),
+            "paddle": SimpleNamespace(
+                is_compiled_with_cuda=lambda: True,
+                device=SimpleNamespace(cuda=SimpleNamespace(device_count=lambda: 1)),
+            ),
+            "easyocr": SimpleNamespace(Reader=FakeEasyReader),
+            "paddleocr": SimpleNamespace(PaddleOCR=FakePaddleReader),
+        }
+        with patch.dict(sys.modules, fake_modules):
+            engines = load_engines("vie+eng", device="auto")
+            self.assertEqual(engines["easyocr"].device, "cuda")
+            self.assertEqual(engines["paddleocr"].device, "gpu:0")
+            self.assertEqual(constructed, [])
+            engines["easyocr"](Path("unused.png"))
+            self.assertEqual(constructed, [("easyocr", True)])
+            engines["easyocr"].release()
+            engines["easyocr"](Path("unused.png"))
+            self.assertEqual(constructed, [("easyocr", True), ("easyocr", True)])
+            engines["paddleocr"](Path("unused.png"))
+            self.assertEqual(constructed[-1], ("paddleocr", "gpu:0"))
+
+    def test_auto_device_falls_back_to_cpu_when_gpu_model_initialization_fails(self):
+        self.assertIn("device", inspect.signature(load_engines).parameters)
+        constructed = []
+
+        class FakeEasyReader:
+            def __init__(self, languages, gpu, verbose):
+                constructed.append(gpu)
+                if gpu:
+                    raise RuntimeError("out of memory")
+
+            def readtext(self, path, detail, paragraph):
+                return []
+
+        fake_modules = {
+            "pytesseract": SimpleNamespace(
+                pytesseract=SimpleNamespace(tesseract_cmd=None),
+                get_languages=lambda config: ["eng", "vie"],
+                Output=SimpleNamespace(DICT="dict"),
+            ),
+            "torch": SimpleNamespace(cuda=SimpleNamespace(
+                is_available=lambda: True, empty_cache=lambda: None,
+            )),
+            "paddle": SimpleNamespace(
+                is_compiled_with_cuda=lambda: True,
+                device=SimpleNamespace(cuda=SimpleNamespace(
+                    device_count=lambda: 1, empty_cache=lambda: None,
+                )),
+            ),
+            "easyocr": SimpleNamespace(Reader=FakeEasyReader),
+            "paddleocr": SimpleNamespace(PaddleOCR=lambda **kwargs: None),
+        }
+        with patch.dict(sys.modules, fake_modules):
+            engines = load_engines("vie+eng", device="auto")
+            with self.assertWarnsRegex(RuntimeWarning, "falling back to CPU"):
+                engines["easyocr"](Path("unused.png"))
+        self.assertEqual(constructed, [True, False])
+        self.assertEqual(engines["easyocr"].device, "cpu")
+
+    def test_benchmark_releases_each_engine_after_processing_to_free_gpu_memory(self):
+        dataset = {"invoices": [{"id": "INV-0001", "pdf": "HD_001.pdf"}]}
+        values = [{"invoice_id": "INV-0001", "pdf": "HD_001.pdf", "field": "invoice_number",
+                   "field_label": "Số hóa đơn", "line": "", "normalized": "123"}]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = root / "page.png"
+            image.write_bytes(base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7WQAAAAASUVORK5CYII="
+            ))
+            (root / "HD_001.pdf").write_bytes(b"test PDF contents")
+            released = Counter()
+            engines = {}
+            for name in ("tesseract", "easyocr", "paddleocr"):
+                def recognize(_path):
+                    return [{"text": "123", "confidence": 0.9, "bbox": [1, 1, 10, 8]}]
+                recognize.device = "cpu"
+                recognize.release = lambda engine=name: released.update([engine])
+                engines[name] = recognize
+            with patch("run_40hd_benchmark.load_engines", return_value=engines), \
+                 patch("run_40hd_benchmark.render_pdf", return_value=[image]):
+                run_benchmark(dataset, values, root, root / "run", 300, "vie+eng")
+        self.assertEqual(released, Counter({"tesseract": 1, "easyocr": 1, "paddleocr": 1}))
 
     def test_numeric_match_uses_whole_number_tokens(self):
         self.assertTrue(value_found("quantity", "5", "Số lượng 5,00"))
