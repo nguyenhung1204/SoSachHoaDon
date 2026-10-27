@@ -82,13 +82,13 @@ subprocess.run(
      'tesseract-ocr', 'tesseract-ocr-eng', 'tesseract-ocr-vie'],
     check=True,
 )
-# PaddleOCR 3.x needs PaddlePaddle >= 3.0. Install its runtime separately so
-# the CPU requirement in requirements_40hd.txt cannot override a GPU runtime.
+# Keep Colab's torch untouched while installing EasyOCR. PaddleOCR 3.x also
+# needs PaddlePaddle >= 3.0, which is installed separately for the chosen device.
 base_requirements = work / 'requirements_colab_base.txt'
 base_requirements.write_text(
     ''.join(
         line for line in (work / 'requirements_40hd.txt').read_text(encoding='utf-8').splitlines(keepends=True)
-        if not re.match(r'\\s*paddlepaddle\\s*(?:[<=>!~]|$)', line, re.IGNORECASE)
+        if not re.match(r'\\s*(?:paddlepaddle|easyocr)\\s*(?:[<=>!~]|$)', line, re.IGNORECASE)
     ),
     encoding='utf-8',
 )
@@ -97,6 +97,54 @@ subprocess.run(
      str(base_requirements)],
     check=True,
 )
+# EasyOCR lists torch/torchvision as dependencies. Install its other runtime
+# dependencies explicitly so pip cannot replace Colab's CUDA-enabled PyTorch.
+subprocess.run(
+    [sys.executable, '-m', 'pip', 'install', '-q',
+     'opencv-python-headless', 'scipy', 'numpy', 'scikit-image',
+     'python-bidi', 'PyYAML', 'Shapely', 'pyclipper', 'ninja'],
+    check=True,
+)
+subprocess.run(
+    [sys.executable, '-m', 'pip', 'install', '-q', '--no-deps',
+     'easyocr>=1.7.2'],
+    check=True,
+)
+
+def ocr_stack_import_probe():
+    return subprocess.run(
+        [sys.executable, '-c',
+         'import easyocr; import torch, torchvision; import paddle; '
+         'from paddleocr import PaddleOCR; print("OCR_STACK_OK")'],
+        capture_output=True, text=True, check=False,
+    )
+
+def ensure_torch_works():
+    probe = ocr_stack_import_probe()
+    if probe.returncode == 0 and 'OCR_STACK_OK' in probe.stdout:
+        return
+    error_text = probe.stderr or probe.stdout
+    if not re.search(r'torch|nccl|cuda', error_text, re.IGNORECASE):
+        raise RuntimeError('Không thể nạp bộ OCR trước khi chạy:\\n' + error_text)
+    detail = error_text.strip().splitlines()
+    print('PyTorch gặp lỗi thư viện CUDA/NCCL; đang cài bản CPU để EasyOCR chạy ổn định.', flush=True)
+    if detail:
+        print('Lỗi PyTorch:', detail[-1], flush=True)
+    subprocess.run(
+        [sys.executable, '-m', 'pip', 'install', '-q', '--force-reinstall',
+         'torch', 'torchvision', '--index-url',
+         'https://download.pytorch.org/whl/cpu'],
+        check=True,
+    )
+    probe = ocr_stack_import_probe()
+    if probe.returncode != 0 or 'OCR_STACK_OK' not in probe.stdout:
+        raise RuntimeError(
+            'Không thể nạp PyTorch cho EasyOCR kể cả sau khi chuyển sang CPU:\\n'
+            + (probe.stderr or probe.stdout)
+        )
+    print('EasyOCR sẽ chạy CPU; PaddleOCR vẫn dùng GPU nếu khởi tạo được.', flush=True)
+
+ensure_torch_works()
 nvidia_probe = (
     subprocess.run(
         ['nvidia-smi', '-L'], capture_output=True, text=True, check=False
@@ -148,6 +196,7 @@ else:
     print('Colab hiện không cấp GPU; cài PaddlePaddle CPU', flush=True)
     install_cpu_paddle()
 
+ensure_torch_works()
 paddle_check = subprocess.run(
     [sys.executable, '-c',
      "import paddle; print('CUDA=' + str(paddle.is_compiled_with_cuda()))"],
@@ -252,7 +301,7 @@ display(Markdown((drive_results / 'BAO_CAO.md').read_text(encoding='utf-8')))
             "source": [
                 "# So sánh 3 kỹ thuật OCR trên 40 hóa đơn\n",
                 "\n",
-                "Đặt `40HD_colab_bundle.zip` trong `My Drive/SoSachHoaDon`, chọn **Runtime → Change runtime type → GPU** nếu Colab cấp GPU, rồi bấm **Run all** bằng tài khoản Colab hiện tại. Cấp quyền Google Drive khi được hỏi. GPU có thể không được cấp; notebook tự chọn GPU khi khả dụng, nếu không thì chạy CPU. Tesseract luôn chạy CPU.\n",
+                "Đặt `40HD_colab_bundle.zip` trong `My Drive/SoSachHoaDon`, chọn **Runtime → Change runtime type → GPU** nếu Colab cấp GPU, rồi bấm **Run all** bằng tài khoản Colab hiện tại. Cấp quyền Google Drive khi được hỏi. GPU có thể không được cấp; notebook giữ PyTorch có sẵn của Colab, và nếu thư viện CUDA/NCCL xung đột sau khi cài Paddle thì EasyOCR tự chuyển sang PyTorch CPU. PaddleOCR vẫn dùng GPU nếu khởi tạo thành công; Tesseract luôn chạy CPU.\n",
                 "Notebook tự cài thư viện phù hợp, chạy cùng 40 PDF ở 300 DPI, dùng chung bộ trích trường để tính Precision, Recall, F1, tạo biểu đồ và lưu checkpoint/kết quả vào `My Drive/SoSachHoaDon/ket_qua/run_...`. Thiết bị thật của từng OCR được ghi trong `metadata.json`; giữ Colab kết nối đến khi hoàn tất.\n",
                 "\n",
                 "Trong thư mục `ket_qua/run_...`, mở `bao_cao_truc_quan.html` để xem biểu đồ, lọc từng kỹ thuật/hóa đơn/trạng thái và xem giá trị trường nào đúng, sai hoặc thiếu. `chi_tiet_hoa_don.csv` ghi từng giá trị và dòng OCR; `predictions.csv` giữ toàn văn OCR. Tỷ lệ tìm thấy giá trị toàn trang được báo riêng với P/R/F1 của OCR cộng bộ trích trường.\n",

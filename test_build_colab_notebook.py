@@ -104,6 +104,36 @@ class NotebookBuilderTests(unittest.TestCase):
         self.assertIn("bằng tài khoản Colab hiện tại", markdown)
         self.assertIn("GPU có thể không được cấp", markdown)
 
+    def test_notebook_preserves_torch_and_falls_back_when_paddle_breaks_nccl(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            notebook_path = root / "run_40HD_colab.ipynb"
+            notebook_path.write_text(json.dumps({
+                "cells": [{"cell_type": "code", "source": ["print('starter')\n"]}],
+            }), encoding="utf-8")
+            for module_name in build_colab_notebook.MODULES:
+                (root / module_name).write_text("# embedded test module\n", encoding="utf-8")
+
+            old_root, old_notebook = build_colab_notebook.ROOT, build_colab_notebook.NOTEBOOK
+            try:
+                build_colab_notebook.ROOT = root
+                build_colab_notebook.NOTEBOOK = notebook_path
+                build_colab_notebook.main()
+            finally:
+                build_colab_notebook.ROOT, build_colab_notebook.NOTEBOOK = old_root, old_notebook
+
+            generated = json.loads(notebook_path.read_text(encoding="utf-8"))
+            code = "".join(next(c for c in generated["cells"] if c["cell_type"] == "code")["source"])
+
+        self.assertIn("not re.match(r'\\s*(?:paddlepaddle|easyocr)\\s*", code)
+        self.assertIn("def ocr_stack_import_probe():", code)
+        self.assertIn("def ensure_torch_works():", code)
+        self.assertIn("https://download.pytorch.org/whl/cpu", code)
+        self.assertIn("ocr_stack_import_probe()", code)
+        self.assertIn("from paddleocr import PaddleOCR", code)
+        self.assertIn("lỗi thư viện CUDA/NCCL", code)
+        self.assertIn("'--no-deps'", code)
+
     def test_notebook_streams_benchmark_log_to_screen_and_drive(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
