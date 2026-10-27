@@ -186,15 +186,41 @@ active_run_file.write_text(
 )
 drive_results.mkdir(parents=True, exist_ok=True)
 print(f'Kết quả và checkpoint được ghi trực tiếp lên Drive: {drive_results}', flush=True)
-subprocess.run(
-    [sys.executable, '-u', str(work / 'run_40hd_benchmark.py'),
-     '--dataset-zip', str(local_bundle),
-     '--dpi', '300',
-     '--device', 'auto',
-     '--output-dir', str(drive_results),
-     '--resume'],
-    check=True,
-)
+benchmark_log = drive_results / 'benchmark.log'
+benchmark_command = [
+    sys.executable, '-u', str(work / 'run_40hd_benchmark.py'),
+    '--dataset-zip', str(local_bundle),
+    '--dpi', '300',
+    '--device', 'auto',
+    '--output-dir', str(drive_results),
+    '--resume',
+]
+output_tail = []
+with benchmark_log.open('a', encoding='utf-8') as log:
+    log.write(f'\\n--- Benchmark bắt đầu {datetime.now().isoformat()} ---\\n')
+    log.flush()
+    process = subprocess.Popen(
+        benchmark_command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        bufsize=1,
+    )
+    for line in process.stdout:
+        print(line, end='', flush=True)
+        log.write(line)
+        output_tail.append(line.rstrip())
+        if len(output_tail) > 80:
+            del output_tail[:-80]
+    return_code = process.wait()
+if return_code:
+    raise RuntimeError(
+        f'Benchmark dừng với mã lỗi {return_code}. '
+        f'Log đầy đủ được lưu tại {benchmark_log}. '
+        '80 dòng cuối từ tiến trình OCR:\\n' + '\\n'.join(output_tail)
+    )
 
 sys.path.insert(0, str(work))
 from structured_metrics_40hd import evaluate_run
