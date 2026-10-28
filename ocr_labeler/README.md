@@ -13,7 +13,7 @@ App chạy trên Windows tại localhost để cắt dòng chữ từ PDF, xác 
    .\start_labeler.ps1
    ```
 
-Script tạo môi trường Python riêng nếu cần, cài Pillow và PyPDFium2, rồi mở `http://127.0.0.1:8765/`. Nhấn **Ctrl+C** trong cửa sổ PowerShell để dừng.
+Script tạo môi trường Python riêng nếu cần, cài Pillow và PyPDFium2, rồi mở `http://127.0.0.1:8765/`. Nhấn **Ctrl+C** trong cửa sổ PowerShell để dừng. Nếu cổng 8765 đang được bản app khác dùng, chạy `$env:OCR_LABELER_PORT=8766` trước `.\start_labeler.ps1`; app sẽ mở ở `http://127.0.0.1:8766/`.
 
 Ở lần chạy đầu app đọc `40HD_colab_bundle.zip` ở thư mục gốc repo và bung 40 PDF cùng `40HD.json` vào `ocr_labeler\state\source`. Bundle gốc không bị sửa. Không cần Node.js hoặc Docker.
 
