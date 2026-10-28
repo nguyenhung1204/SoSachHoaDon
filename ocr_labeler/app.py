@@ -33,6 +33,7 @@ DB_PATH = STATE_DIR / "labeler.sqlite3"
 DICT_PATH = APP_DIR / "assets" / "ppocrv6_dict.txt"
 PORT = int(os.environ.get("OCR_LABELER_PORT", "8765"))
 RENDER_DPI = 300
+MAX_LABEL_LENGTH = 65
 SPLITS = ("train", "val", "test")
 FIELD_TYPES = {
     "item_description": "Tên mặt hàng",
@@ -442,8 +443,8 @@ def readiness(full_check: bool = False) -> dict:
             unconfirmed += 1
         if "\n" in crop["label"] or "\r" in crop["label"] or "\t" in crop["label"]:
             errors.append(f"Nhãn crop {crop['id']} có tab/xuống dòng, không thể biểu diễn an toàn trong file PaddleOCR.")
-        if len(crop["label"]) > 25:
-            errors.append(f"Nhãn crop {crop['id']} dài hơn giới hạn 25 ký tự của cấu hình PP-OCRv6; hãy cắt thành vùng nhỏ hơn.")
+        if len(crop["label"]) > MAX_LABEL_LENGTH:
+            errors.append(f"Nhãn crop {crop['id']} dài hơn giới hạn {MAX_LABEL_LENGTH} ký tự.")
         if dictionary is not None:
             bad = sorted({char for char in crop["label"] if char not in dictionary and not char.isspace()})
             if bad:
@@ -685,8 +686,10 @@ def import_handoff(zip_path: Path) -> dict[str, int]:
             label = crop.get("label")
             if field_type not in FIELD_TYPES or not isinstance(label, str) or not label.strip():
                 raise ValueError(f"Crop {crop_id} thiếu loại trường hoặc nhãn.")
-            if len(label) > 25 or any(char in label for char in "\r\n\t"):
-                raise ValueError(f"Nhãn crop {crop_id} vượt giới hạn hoặc chứa tab/xuống dòng.")
+            if len(label) > MAX_LABEL_LENGTH:
+                raise ValueError(f"Nhãn crop {crop_id} vượt giới hạn {MAX_LABEL_LENGTH} ký tự.")
+            if any(char in label for char in "\r\n\t"):
+                raise ValueError(f"Nhãn crop {crop_id} chứa tab hoặc xuống dòng.")
             unsupported = sorted({char for char in label if char not in dictionary and not char.isspace()})
             if unsupported:
                 raise ValueError(f"Nhãn crop {crop_id} có ký tự ngoài dictionary: {''.join(unsupported)!r}.")
@@ -1004,6 +1007,8 @@ class Handler(BaseHTTPRequestHandler):
         confirmed = bool(body.get("confirmed", False))
         if field_type not in FIELD_TYPES:
             raise ValueError("Loại trường không hợp lệ.")
+        if len(label) > MAX_LABEL_LENGTH:
+            raise ValueError(f"Nhãn tối đa {MAX_LABEL_LENGTH} ký tự.")
         if confirmed and not label.strip():
             raise ValueError("Nhập nội dung nhìn thấy trước khi xác nhận nhãn.")
         with connect() as connection:

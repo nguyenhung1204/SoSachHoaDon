@@ -20,7 +20,7 @@ Script tạo môi trường Python riêng nếu cần, cài Pillow và PyPDFium2
 ## Cắt và gán nhãn
 
 1. Chọn hóa đơn ở cột trái; kiểm tra split train, validation hoặc test.
-2. Kéo khung sát một dòng hoặc giá trị cần nhận diện. Cắt các cột trong bảng thành từng crop riêng; crop không quá 25 ký tự theo cấu hình PP-OCRv6.
+2. Kéo khung sát một dòng hoặc giá trị cần nhận diện. Cắt các cột trong bảng thành từng crop riêng; mỗi nhãn tối đa 65 ký tự theo cấu hình fine-tune.
 3. Bấm **Lưu crop và nhập nhãn**.
 4. Ở thẻ crop, bấm **Lấy chữ từ vùng PDF**. App hiển thị phần chữ lấy từ lớp text PDF; bấm **Chép vào ô nhãn** để điền vào ô. Đối chiếu với ảnh crop, sửa nếu cần, chọn loại nội dung và tự tích xác nhận.
 5. Nếu PDF là bản scan hoặc vùng không có lớp chữ, app sẽ báo không lấy được chữ; nhập nhãn bằng tay theo ảnh crop.

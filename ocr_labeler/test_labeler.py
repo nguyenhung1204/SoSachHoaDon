@@ -91,6 +91,22 @@ class LabelerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PDF scan"):
             app.extract_crop_text(scan_crop_id)
 
+    def test_label_length_limit_is_65_characters(self):
+        invoice = app.invoice_rows()[0]
+        crop_id = self.create_crop(invoice, 0, (0, 0, 24, 16))
+        for length in (25, 26, 65):
+            self.set_label(crop_id, "A" * length)
+        label = "Công ty " * 8 + "A"
+        self.set_label(crop_id, label)
+        with app.connect() as connection:
+            saved = connection.execute("SELECT label,confirmed FROM crops WHERE id=?", (crop_id,)).fetchone()
+        self.assertEqual(saved["label"], label)
+        self.assertEqual(saved["confirmed"], 1)
+        with self.assertRaisesRegex(ValueError, "65"):
+            self.set_label(crop_id, "A" * 66)
+        with app.connect() as connection:
+            self.assertEqual(connection.execute("SELECT label FROM crops WHERE id=?", (crop_id,)).fetchone()["label"], label)
+
     def test_handoff_import_merge_duplicate_and_conflict(self):
         rows = app.invoice_rows()
         chosen = {split: next(row for row in rows if row["split"] == split) for split in app.SPLITS}
@@ -104,7 +120,7 @@ class LabelerTests(unittest.TestCase):
                        field_type,label,confirmed,image_name,created_at,updated_at)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (f"{index + 1:032x}", invoice["id"], 0, 0, 0, 24, 16, 0, 0, 1, 1,
-                     "other", "1", 1, name, app.now_iso(), app.now_iso()),
+                     "other", (("Công ty " * 8 + "A"), "B" * 26, "C" * 25)[index], 1, name, app.now_iso(), app.now_iso()),
                 )
 
         archive_path, skipped_unconfirmed = app.export_handoff()
@@ -114,8 +130,24 @@ class LabelerTests(unittest.TestCase):
         app.initialize_database()
         imported = app.import_handoff(archive_path)
         self.assertEqual(imported, {"imported": 3, "skipped_duplicates": 0})
+        with app.connect() as connection:
+            self.assertEqual(connection.execute("SELECT label FROM crops WHERE id=?", (f"{1:032x}",)).fetchone()["label"], "Công ty " * 8 + "A")
+            self.assertEqual(connection.execute("SELECT label FROM crops WHERE id=?", (f"{2:032x}",)).fetchone()["label"], "B" * 26)
+            self.assertEqual(connection.execute("SELECT label FROM crops WHERE id=?", (f"{3:032x}",)).fetchone()["label"], "C" * 25)
         duplicate = app.import_handoff(archive_path)
         self.assertEqual(duplicate, {"imported": 0, "skipped_duplicates": 3})
+
+        too_long_path = friend_root / "too_long.zip"
+        with zipfile.ZipFile(archive_path) as source, zipfile.ZipFile(too_long_path, "w", zipfile.ZIP_DEFLATED) as target:
+            for name in source.namelist():
+                contents = source.read(name)
+                if name == "manifest.json":
+                    manifest = json.loads(contents.decode("utf-8"))
+                    manifest["crops"][0]["label"] = "A" * 66
+                    contents = json.dumps(manifest, ensure_ascii=False).encode("utf-8")
+                target.writestr(name, contents)
+        with self.assertRaisesRegex(ValueError, "65"):
+            app.import_handoff(too_long_path)
 
         conflict_path = friend_root / "conflict.zip"
         with zipfile.ZipFile(archive_path) as source, zipfile.ZipFile(conflict_path, "w", zipfile.ZIP_DEFLATED) as target:

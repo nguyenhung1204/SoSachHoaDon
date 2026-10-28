@@ -315,7 +315,7 @@ function renderCrops(focusCropId = null) {
             <p data-pdf-text-value></p>
             <button class="text-button apply-pdf-text" data-apply-pdf-text="${escapeHtml(crop.id)}" type="button">Chép vào ô nhãn</button>
           </div>
-          <textarea id="label-${escapeHtml(crop.id)}" data-crop-label="${escapeHtml(crop.id)}" placeholder="Chép nguyên văn đúng như crop/PDF">${escapeHtml(crop.label)}</textarea>
+          <textarea id="label-${escapeHtml(crop.id)}" data-crop-label="${escapeHtml(crop.id)}" maxlength="65" placeholder="Chép nguyên văn đúng như crop/PDF · tối đa 65 ký tự">${escapeHtml(crop.label)}</textarea>
           <label class="crop-confirm"><input type="checkbox" data-crop-confirm="${escapeHtml(crop.id)}" ${crop.confirmed ? "checked" : ""}><span>Đã đối chiếu crop với PDF và xác nhận bản chép</span></label>
           <div class="crop-save-state" data-save-state="${escapeHtml(crop.id)}">${crop.confirmed ? "Đã lưu và xác nhận" : "Lưu tự động · chưa xác nhận"}</div>
         </div>
