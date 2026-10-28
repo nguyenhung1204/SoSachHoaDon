@@ -20,6 +20,7 @@ body { margin: 0; min-width: 340px; height: 100vh; overflow: hidden; background:
 button, input, select, textarea { font: inherit; }
 button, select { cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid #83aaff; outline-offset: 2px; }
+[hidden] { display: none !important; }
 .topbar { height: 76px; background: var(--navy); color: white; display: flex; align-items: center; gap: 14px; padding: 0 22px; box-shadow: 0 3px 16px #10233f25; }
 .brand-mark { width: 46px; height: 46px; display: grid; place-items: center; border: 1px solid #7194be; border-radius: 14px; background: #1d385b; font-size: 14px; font-weight: 800; letter-spacing: .06em; }
 .brand-copy span, .eyebrow { display: block; color: #7285a0; letter-spacing: .11em; font-size: 10px; font-weight: 800; }
