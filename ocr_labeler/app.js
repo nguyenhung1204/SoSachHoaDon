@@ -315,7 +315,7 @@ function renderCrops(focusCropId = null) {
             <p data-pdf-text-value></p>
             <button class="text-button apply-pdf-text" data-apply-pdf-text="${escapeHtml(crop.id)}" type="button">Chép vào ô nhãn</button>
           </div>
-          <textarea id="label-${escapeHtml(crop.id)}" data-crop-label="${escapeHtml(crop.id)}" maxlength="65" placeholder="Chép nguyên văn đúng như crop/PDF · tối đa 65 ký tự">${escapeHtml(crop.label)}</textarea>
+          <textarea id="label-${escapeHtml(crop.id)}" data-crop-label="${escapeHtml(crop.id)}" maxlength="90" placeholder="Chép nguyên văn đúng như crop/PDF · tối đa 90 ký tự">${escapeHtml(crop.label)}</textarea>
           <label class="crop-confirm"><input type="checkbox" data-crop-confirm="${escapeHtml(crop.id)}" ${crop.confirmed ? "checked" : ""}><span>Đã đối chiếu crop với PDF và xác nhận bản chép</span></label>
           <div class="crop-save-state" data-save-state="${escapeHtml(crop.id)}">${crop.confirmed ? "Đã lưu và xác nhận" : "Lưu tự động · chưa xác nhận"}</div>
         </div>
@@ -344,8 +344,11 @@ function renderCrops(focusCropId = null) {
         if (!result || !textValue || !applyButton) throw new Error("Không tìm thấy vùng xem trước chữ PDF.");
         textValue.textContent = data.text;
         applyButton.dataset.extractedText = data.text;
+        applyButton.disabled = data.text.length > 90;
+        applyButton.textContent = data.text.length > 90 ? "Dài hơn 90 ký tự · hãy crop ngắn hơn" : "Chép vào ô nhãn";
         result.hidden = false;
-        toast("Đã lấy chữ từ lớp PDF. Đối chiếu với crop rồi bấm “Chép vào ô nhãn”.");
+        if (data.text.length > 90) toast("Vùng chữ dài hơn 90 ký tự; hãy crop sát hơn hoặc chia theo dòng.", true);
+        else toast("Đã lấy chữ từ lớp PDF. Đối chiếu với crop rồi bấm “Chép vào ô nhãn”.");
       } catch (error) {
         toast(error.message, true);
       } finally {
@@ -357,8 +360,9 @@ function renderCrops(focusCropId = null) {
   cropListEl.querySelectorAll("[data-apply-pdf-text]").forEach((button) => {
     button.addEventListener("click", () => {
       const textarea = cropListEl.querySelector(`[data-crop-label="${CSS.escape(button.dataset.applyPdfText)}"]`);
-      if (!textarea || button.dataset.extractedText === undefined) return;
-      textarea.value = button.dataset.extractedText;
+      const text = button.dataset.extractedText;
+      if (!textarea || text === undefined || text.length > 90) return;
+      textarea.value = text;
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
       textarea.focus();
       toast("Đã chép vào ô nhãn và lưu nháp. Hãy đối chiếu crop rồi tự xác nhận.");

@@ -20,9 +20,9 @@ Script tạo môi trường Python riêng nếu cần, cài Pillow và PyPDFium2
 ## Cắt và gán nhãn
 
 1. Chọn hóa đơn ở cột trái; kiểm tra split train, validation hoặc test.
-2. Kéo khung sát một dòng hoặc giá trị cần nhận diện. Cắt các cột trong bảng thành từng crop riêng; mỗi nhãn tối đa 65 ký tự theo cấu hình fine-tune.
+2. Kéo khung sát một dòng hoặc giá trị cần nhận diện. Cắt các cột trong bảng thành từng crop riêng; mỗi nhãn tối đa 90 ký tự theo cấu hình fine-tune.
 3. Bấm **Lưu crop và nhập nhãn**.
-4. Ở thẻ crop, bấm **Lấy chữ từ vùng PDF**. App hiển thị phần chữ lấy từ lớp text PDF; bấm **Chép vào ô nhãn** để điền vào ô. Đối chiếu với ảnh crop, sửa nếu cần, chọn loại nội dung và tự tích xác nhận.
+4. Ở thẻ crop, bấm **Lấy chữ từ vùng PDF**. App hiển thị phần chữ lấy từ lớp text PDF; bấm **Chép vào ô nhãn** để điền vào ô. Đối chiếu với ảnh crop, sửa nếu cần, chọn loại nội dung và tự tích xác nhận. Nếu khung lấy nhiều dòng, app sẽ yêu cầu crop riêng từng dòng để không nối sai nội dung.
 5. Nếu PDF là bản scan hoặc vùng không có lớp chữ, app sẽ báo không lấy được chữ; nhập nhãn bằng tay theo ảnh crop.
 
 JSON trong bundle chỉ là gợi ý cấp trường, không thay thế bản chép đã đối chiếu với crop. Không thêm nhãn theo suy đoán. Các split được gán ở cấp hóa đơn, mặc định 30/5/5; giữ nguyên split để không chia các crop của một hóa đơn qua nhiều tập.

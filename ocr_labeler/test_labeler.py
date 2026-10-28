@@ -91,21 +91,27 @@ class LabelerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PDF scan"):
             app.extract_crop_text(scan_crop_id)
 
-    def test_label_length_limit_is_65_characters(self):
+    def test_label_length_limit_is_90_characters(self):
         invoice = app.invoice_rows()[0]
         crop_id = self.create_crop(invoice, 0, (0, 0, 24, 16))
-        for length in (25, 26, 65):
+        for length in (25, 26, 65, 90):
             self.set_label(crop_id, "A" * length)
-        label = "Công ty " * 8 + "A"
+        label = "Công ty " * 11 + "AB"
         self.set_label(crop_id, label)
         with app.connect() as connection:
             saved = connection.execute("SELECT label,confirmed FROM crops WHERE id=?", (crop_id,)).fetchone()
         self.assertEqual(saved["label"], label)
         self.assertEqual(saved["confirmed"], 1)
-        with self.assertRaisesRegex(ValueError, "65"):
-            self.set_label(crop_id, "A" * 66)
+        with self.assertRaisesRegex(ValueError, "90"):
+            self.set_label(crop_id, "A" * 91)
         with app.connect() as connection:
             self.assertEqual(connection.execute("SELECT label FROM crops WHERE id=?", (crop_id,)).fetchone()["label"], label)
+
+    def test_ui_has_pdf_text_copy_and_90_character_input(self):
+        source = (app.APP_DIR / "app.js").read_text(encoding="utf-8")
+        self.assertIn('maxlength="90"', source)
+        self.assertIn("/api/crop-text/", source)
+        self.assertIn("Chép vào ô nhãn", source)
 
     def test_handoff_import_merge_duplicate_and_conflict(self):
         rows = app.invoice_rows()
@@ -120,7 +126,7 @@ class LabelerTests(unittest.TestCase):
                        field_type,label,confirmed,image_name,created_at,updated_at)
                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (f"{index + 1:032x}", invoice["id"], 0, 0, 0, 24, 16, 0, 0, 1, 1,
-                     "other", (("Công ty " * 8 + "A"), "B" * 26, "C" * 25)[index], 1, name, app.now_iso(), app.now_iso()),
+                     "other", (("Công ty " * 11 + "AB"), "B" * 26, "C" * 25)[index], 1, name, app.now_iso(), app.now_iso()),
                 )
 
         archive_path, skipped_unconfirmed = app.export_handoff()
@@ -131,7 +137,7 @@ class LabelerTests(unittest.TestCase):
         imported = app.import_handoff(archive_path)
         self.assertEqual(imported, {"imported": 3, "skipped_duplicates": 0})
         with app.connect() as connection:
-            self.assertEqual(connection.execute("SELECT label FROM crops WHERE id=?", (f"{1:032x}",)).fetchone()["label"], "Công ty " * 8 + "A")
+            self.assertEqual(connection.execute("SELECT label FROM crops WHERE id=?", (f"{1:032x}",)).fetchone()["label"], "Công ty " * 11 + "AB")
             self.assertEqual(connection.execute("SELECT label FROM crops WHERE id=?", (f"{2:032x}",)).fetchone()["label"], "B" * 26)
             self.assertEqual(connection.execute("SELECT label FROM crops WHERE id=?", (f"{3:032x}",)).fetchone()["label"], "C" * 25)
         duplicate = app.import_handoff(archive_path)
@@ -143,10 +149,10 @@ class LabelerTests(unittest.TestCase):
                 contents = source.read(name)
                 if name == "manifest.json":
                     manifest = json.loads(contents.decode("utf-8"))
-                    manifest["crops"][0]["label"] = "A" * 66
+                    manifest["crops"][0]["label"] = "A" * 91
                     contents = json.dumps(manifest, ensure_ascii=False).encode("utf-8")
                 target.writestr(name, contents)
-        with self.assertRaisesRegex(ValueError, "65"):
+        with self.assertRaisesRegex(ValueError, "90"):
             app.import_handoff(too_long_path)
 
         conflict_path = friend_root / "conflict.zip"
@@ -162,6 +168,30 @@ class LabelerTests(unittest.TestCase):
             app.import_handoff(conflict_path)
         with app.connect() as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM crops").fetchone()[0], 3)
+
+    def test_text_layer_does_not_flatten_multiple_selected_lines(self):
+        invoice = next(row for row in app.invoice_rows() if row["pdf"] == "HD_001.pdf")
+        document = pdfium.PdfDocument(str(app.PDF_DIR / invoice["pdf"]))
+        page = document[0]
+        bbox = page.get_bbox()
+        text_page = page.get_textpage()
+        full_text = text_page.get_text_range()
+        boxes = []
+        for value in ("Công ty TNHH Thương Mại Tổng hợp HTV", "0108075931"):
+            index = full_text.find(value)
+            self.assertGreaterEqual(index, 0, f"Không tìm thấy {value!r} trong PDF.")
+            boxes.extend(text_page.get_charbox(index + offset) for offset in range(len(value)))
+        text_page.close()
+        document.close()
+
+        _, pixel_width, pixel_height, _, _, _ = app.page_image(invoice["id"], 0)
+        x0 = max(0, math.floor(min(box[0] for box in boxes) / bbox[2] * pixel_width) - 3)
+        x1 = min(pixel_width, math.ceil(max(box[2] for box in boxes) / bbox[2] * pixel_width) + 3)
+        y0 = max(0, math.floor((bbox[3] - max(box[3] for box in boxes)) / bbox[3] * pixel_height) - 3)
+        y1 = min(pixel_height, math.ceil((bbox[3] - min(box[1] for box in boxes)) / bbox[3] * pixel_height) + 3)
+        crop_id = self.create_crop(invoice, 0, (x0, y0, x1, y1))
+        with self.assertRaisesRegex(ValueError, "nhiều dòng"):
+            app.extract_crop_text(crop_id)
 
 
 if __name__ == "__main__":

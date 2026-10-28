@@ -33,7 +33,7 @@ DB_PATH = STATE_DIR / "labeler.sqlite3"
 DICT_PATH = APP_DIR / "assets" / "ppocrv6_dict.txt"
 PORT = int(os.environ.get("OCR_LABELER_PORT", "8765"))
 RENDER_DPI = 300
-MAX_LABEL_LENGTH = 65
+MAX_LABEL_LENGTH = 90
 SPLITS = ("train", "val", "test")
 FIELD_TYPES = {
     "item_description": "Tên mặt hàng",
@@ -361,11 +361,16 @@ def extract_crop_text(crop_id: str) -> str:
     finally:
         document.close()
 
-    extracted = unicodedata.normalize("NFC", extracted)
-    extracted = re.sub(r"\s+", " ", extracted).strip()
-    if not extracted:
+    lines = [
+        re.sub(r"[\t\f\v ]+", " ", line).strip()
+        for line in re.split(r"\r\n|\r|\n", unicodedata.normalize("NFC", extracted))
+    ]
+    lines = [line for line in lines if line]
+    if len(lines) > 1:
+        raise ValueError("Vùng chọn có nhiều dòng chữ; hãy crop từng dòng riêng.")
+    if not lines:
         raise ValueError("Vùng này không có lớp chữ PDF để chép. Nếu đây là PDF scan, hãy nhập nhãn theo ảnh crop.")
-    return extracted
+    return lines[0]
 
 
 def dictionary_chars() -> set[str] | None:
