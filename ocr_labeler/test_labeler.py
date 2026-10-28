@@ -332,6 +332,8 @@ class LabelerTests(unittest.TestCase):
         self.assertIn('id="invoice-review-button"', html)
         self.assertIn('id="handoff-import-file"', html)
         self.assertIn("Đã rà soát", script)
+        self.assertIn("Sẵn sàng xuất ZIP bàn giao", script)
+        self.assertIn("Không cần xử lý dictionary hoặc checkpoint để xuất ZIP bàn giao.", script)
         self.assertIn("/review", script)
         self.assertIn("scope=", script)
 

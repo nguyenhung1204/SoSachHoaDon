@@ -186,22 +186,37 @@ async function refreshReadinessNow() {
   const data = await response.json();
   const card = $("#readiness-card");
   const counts = data.split_counts;
-  const title = data.data_ready ? "Dữ liệu recognition đã qua kiểm tra" : "Chưa đủ điều kiện xuất / huấn luyện";
-  const issues = [...data.errors.slice(0, 3), ...data.warnings.slice(0, 3)];
   const progress = data.scope_progress[annotationScope];
   const scopeTitle = annotationScope === "all" ? "Tổng hợp" : annotationScope === "duy" ? "Duy" : "Vân";
-  card.className = `readiness-card ${data.data_ready ? "ready" : "blocked"}`;
-  card.innerHTML = `<strong>${escapeHtml(title)}</strong>
-    <div>${scopeTitle}: đã rà soát ${progress.reviewed}/${progress.total} hóa đơn</div>
-    <div>Hóa đơn train / val / test: ${counts.train}/${counts.val}/${counts.test} · Crop đã xác nhận: ${data.confirmed_count}/${data.crop_count}</div>
-    <div>PP-OCRv6 dictionary: ${data.errors.some((item) => item.includes("dictionary")) ? "chưa sẵn sàng" : "đã có"} · Source/checkpoint train: ${data.training_assets_ready ? "đã có" : "chưa tải"}</div>
-    ${issues.length ? `<ul>${issues.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}`;
+  let handoffReady = false;
+  if (annotationScope === "all") {
+    const title = data.data_ready ? "Dữ liệu recognition đã qua kiểm tra" : "Chưa đủ điều kiện xuất / huấn luyện";
+    const issues = [...data.errors.slice(0, 3), ...data.warnings.slice(0, 3)];
+    card.className = `readiness-card ${data.data_ready ? "ready" : "blocked"}`;
+    card.innerHTML = `<strong>${escapeHtml(title)}</strong>
+      <div>Hóa đơn train / val / test: ${counts.train}/${counts.val}/${counts.test} · Crop đã xác nhận: ${data.confirmed_count}/${data.crop_count}</div>
+      <div>PP-OCRv6 dictionary: ${data.errors.some((item) => item.includes("dictionary")) ? "chưa sẵn sàng" : "đã có"} · Source/checkpoint train: ${data.training_assets_ready ? "đã có" : "chưa tải"}</div>
+      ${issues.length ? `<ul>${issues.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}`;
+  } else {
+    const cropCount = allInvoices.reduce((total, invoice) => total + Number(invoice.crop_count || 0), 0);
+    const confirmedCount = allInvoices.reduce((total, invoice) => total + Number(invoice.confirmed_count || 0), 0);
+    const unreviewedCount = progress.total - progress.reviewed;
+    const unconfirmedCount = cropCount - confirmedCount;
+    handoffReady = unreviewedCount === 0 && unconfirmedCount === 0;
+    card.className = `readiness-card ${handoffReady ? "ready" : "blocked"}`;
+    card.innerHTML = `<strong>${handoffReady ? "Sẵn sàng xuất ZIP bàn giao" : "Tiến độ gán nhãn ${scopeTitle}"}</strong>
+      <div>Đã rà soát ${progress.reviewed}/${progress.total} hóa đơn</div>
+      <div>Crop đã xác nhận: ${confirmedCount}/${cropCount}</div>
+      ${unreviewedCount ? `<div>Còn ${unreviewedCount} hóa đơn cần rà soát.</div>` : ""}
+      ${unconfirmedCount ? `<div>Còn ${unconfirmedCount} crop cần nhập nhãn hoặc xác nhận.</div>` : ""}
+      <div>Không cần xử lý dictionary hoặc checkpoint để xuất ZIP bàn giao.</div>`;
+  }
   const finalExport = $("#export-button");
   finalExport.hidden = annotationScope !== "all";
   finalExport.disabled = annotationScope !== "all" || data.errors.length > 0;
   const handoffExport = $("#handoff-export-button");
   handoffExport.hidden = annotationScope === "all";
-  handoffExport.disabled = annotationScope === "all" || progress.reviewed !== progress.total;
+  handoffExport.disabled = annotationScope === "all" || !handoffReady;
   handoffExport.textContent = `Xuất ZIP ${scopeTitle} · 20 hóa đơn`;
   $(".import-handoff-button").hidden = annotationScope !== "all";
 }
