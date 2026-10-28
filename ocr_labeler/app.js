@@ -28,6 +28,9 @@ let savePromises = new Map();
 let pendingDeleteId = null;
 let toastTimer = null;
 let readinessTimer = null;
+let annotationScope = ["duy", "van", "all"].includes(localStorage.getItem("ocr-labeler-scope"))
+  ? localStorage.getItem("ocr-labeler-scope") : "duy";
+let scopeDefinitions = {};
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -62,9 +65,77 @@ function setSaveStatus(message, error = false) {
 }
 
 function statusText(invoice) {
-  if (!invoice.crop_count) return "Chưa cắt crop";
-  if (invoice.confirmed_count === invoice.crop_count) return "Đã xác nhận";
+  if (invoice.review_complete) return "Đã rà soát";
+  if (!invoice.crop_count) return "Chưa rà soát";
+  if (invoice.confirmed_count < invoice.crop_count) return "Cần gán nhãn";
   return "Cần gán nhãn";
+}
+
+function renderScopeSummary() {
+  const details = scopeDefinitions[annotationScope];
+  if (!details?.invoices?.length) return;
+  const first = details.invoices[0];
+  const last = details.invoices[details.invoices.length - 1];
+  $("#scope-summary").textContent = `${details.label}: ${first.id} · ${first.pdf} → ${last.id} · ${last.pdf}`;
+}
+
+function renderInvoiceReviewState() {
+  const button = $("#invoice-review-button");
+  const state = $("#invoice-review-state");
+  if (!activeInvoice?.id) {
+    button.disabled = true;
+    state.textContent = "Chưa rà soát hóa đơn";
+    return;
+  }
+  const complete = Boolean(activeInvoice.review_complete);
+  state.textContent = complete ? `Đã rà soát bởi ${activeInvoice.reviewed_by || "người dùng"}` : "Chưa rà soát hóa đơn này";
+  button.disabled = false;
+  button.textContent = complete ? "Mở lại để sửa" : "Đánh dấu đã rà soát";
+}
+
+async function changeScope() {
+  await flushSaves();
+  annotationScope = $("#scope-selector").value;
+  localStorage.setItem("ocr-labeler-scope", annotationScope);
+  $("#search").value = "";
+  $("#split-filter").value = "all";
+  $("#status-filter").value = "all";
+  renderScopeSummary();
+  await refreshInvoices();
+  await refreshReadinessNow();
+  if (!allInvoices.length) return;
+  if (activeInvoice && allInvoices.some((item) => item.id === activeInvoice.id)) {
+    activeIndex = allInvoices.findIndex((item) => item.id === activeInvoice.id);
+    await loadActiveInvoice({ keepPage: true });
+  } else {
+    await selectInvoice(allInvoices[0].id);
+  }
+}
+
+async function toggleInvoiceReview() {
+  if (!activeInvoice?.id) return;
+  const complete = !Boolean(activeInvoice.review_complete);
+  if (complete && !activeInvoice.crops.length && !window.confirm("Hóa đơn này không có crop. Bạn đã kiểm tra toàn bộ PDF và xác nhận không cần lấy vùng chữ chưa?")) return;
+  if (!complete && !window.confirm("Mở lại hóa đơn này? Gói bàn giao sẽ cần được xuất lại sau khi rà soát xong.")) return;
+  const reviewer = annotationScope === "all" ? "Người tổng hợp" : annotationScope === "duy" ? "Duy" : "Vân";
+  const button = $("#invoice-review-button");
+  button.disabled = true;
+  try {
+    await flushSaves();
+    await api(`/api/invoice/${encodeURIComponent(activeInvoice.id)}/review`, {
+      method: "POST", body: JSON.stringify({ review_complete: complete, reviewer }),
+    });
+    activeInvoice.review_complete = complete ? 1 : 0;
+    activeInvoice.reviewed_by = complete ? reviewer : "";
+    renderInvoiceReviewState();
+    await refreshInvoices();
+    await refreshReadinessNow();
+    toast(complete ? "Đã lưu trạng thái rà soát hóa đơn." : "Đã mở lại hóa đơn để chỉnh sửa.");
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function renderInvoiceList() {
@@ -74,7 +145,8 @@ function renderInvoiceList() {
   visibleInvoices = allInvoices.filter((invoice) => {
     const matchText = !q || `${invoice.id} ${invoice.pdf} ${invoice.supplier_name}`.toLocaleLowerCase("vi").includes(q);
     const matchSplit = split === "all" || invoice.split === split;
-    const matchStatus = status === "all" || (status === "empty" && invoice.crop_count === 0)
+    const matchStatus = status === "all" || (status === "unreviewed" && !invoice.review_complete)
+      || (status === "reviewed" && invoice.review_complete)
       || (status === "review" && (!invoice.crop_count || invoice.confirmed_count < invoice.crop_count))
       || (status === "done" && invoice.crop_count > 0 && invoice.crop_count === invoice.confirmed_count);
     return matchText && matchSplit && matchStatus;
@@ -83,19 +155,18 @@ function renderInvoiceList() {
     <button class="invoice-item ${activeInvoice?.id === invoice.id ? "selected" : ""}" data-invoice="${escapeHtml(invoice.id)}" role="listitem" type="button" aria-current="${activeInvoice?.id === invoice.id ? "true" : "false"}">
       <span><span class="invoice-id">${escapeHtml(invoice.id)}</span><span class="invoice-pdf">${escapeHtml(invoice.pdf)}</span></span>
       <span class="invoice-count">${invoice.confirmed_count}/${invoice.crop_count} nhãn</span>
-      <span class="invoice-vendor" title="${escapeHtml(invoice.supplier_name)}">${escapeHtml(invoice.supplier_name || "Chưa có tên nhà cung cấp")}</span>
+      <span class="invoice-vendor" title="${escapeHtml(invoice.supplier_name)}">${escapeHtml(invoice.supplier_name || "Chưa có tên nhà cung cấp")} · ${statusText(invoice)}</span>
     </button>`).join("") || `<div class="empty-state compact"><h3>Không tìm thấy</h3><p>Thử đổi từ khóa hoặc bộ lọc.</p></div>`;
   invoiceListEl.querySelectorAll("[data-invoice]").forEach((button) => {
     button.addEventListener("click", () => selectInvoice(button.dataset.invoice));
   });
-  const done = allInvoices.reduce((total, invoice) => total + Number(invoice.confirmed_count || 0), 0);
-  const cropTotal = allInvoices.reduce((total, invoice) => total + Number(invoice.crop_count || 0), 0);
+  const done = allInvoices.reduce((total, invoice) => total + Number(Boolean(invoice.review_complete)), 0);
   invoiceTotalEl.textContent = allInvoices.length;
-  invoiceProgressEl.textContent = `${done}/${cropTotal} nhãn`;
+  invoiceProgressEl.textContent = `${done}/${allInvoices.length} rà soát`;
 }
 
 async function refreshInvoices() {
-  const response = await api("/api/invoices");
+  const response = await api(`/api/invoices?scope=${encodeURIComponent(annotationScope)}`);
   allInvoices = (await response.json()).invoices;
   renderInvoiceList();
 }
@@ -117,12 +188,22 @@ async function refreshReadinessNow() {
   const counts = data.split_counts;
   const title = data.data_ready ? "Dữ liệu recognition đã qua kiểm tra" : "Chưa đủ điều kiện xuất / huấn luyện";
   const issues = [...data.errors.slice(0, 3), ...data.warnings.slice(0, 3)];
+  const progress = data.scope_progress[annotationScope];
+  const scopeTitle = annotationScope === "all" ? "Tổng hợp" : annotationScope === "duy" ? "Duy" : "Vân";
   card.className = `readiness-card ${data.data_ready ? "ready" : "blocked"}`;
   card.innerHTML = `<strong>${escapeHtml(title)}</strong>
+    <div>${scopeTitle}: đã rà soát ${progress.reviewed}/${progress.total} hóa đơn</div>
     <div>Hóa đơn train / val / test: ${counts.train}/${counts.val}/${counts.test} · Crop đã xác nhận: ${data.confirmed_count}/${data.crop_count}</div>
     <div>PP-OCRv6 dictionary: ${data.errors.some((item) => item.includes("dictionary")) ? "chưa sẵn sàng" : "đã có"} · Source/checkpoint train: ${data.training_assets_ready ? "đã có" : "chưa tải"}</div>
     ${issues.length ? `<ul>${issues.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : ""}`;
-  $("#export-button").disabled = data.errors.length > 0;
+  const finalExport = $("#export-button");
+  finalExport.hidden = annotationScope !== "all";
+  finalExport.disabled = annotationScope !== "all" || data.errors.length > 0;
+  const handoffExport = $("#handoff-export-button");
+  handoffExport.hidden = annotationScope === "all";
+  handoffExport.disabled = annotationScope === "all" || progress.reviewed !== progress.total;
+  handoffExport.textContent = `Xuất ZIP ${scopeTitle} · 20 hóa đơn`;
+  $(".import-handoff-button").hidden = annotationScope !== "all";
 }
 
 async function selectInvoice(invoiceId) {
@@ -146,9 +227,11 @@ async function loadActiveInvoice(options = {}) {
     if (found >= 0) activeIndex = found;
     $("#pdf-name").textContent = activeInvoice.pdf;
     $("#pdf-meta").textContent = `${activeInvoice.id} · ${activeInvoice.supplier_name || "Chưa có nhà cung cấp"}`;
-    $("#invoice-position").textContent = `${activeIndex + 1} / ${allInvoices.length}`;
-    $("#invoice-split").disabled = false;
+    const listEntry = allInvoices.find((item) => item.id === activeInvoice.id);
+    $("#invoice-position").textContent = `${listEntry?.position || activeIndex + 1} / 40`;
+    $("#invoice-split").disabled = annotationScope !== "all";
     $("#invoice-split").value = activeInvoice.split;
+    renderInvoiceReviewState();
     $("#prev-invoice").disabled = activeIndex <= 0;
     $("#next-invoice").disabled = activeIndex >= allInvoices.length - 1;
     pageIndex = Math.min(wantedPage, Math.max(0, pageCount - 1));
@@ -390,6 +473,9 @@ function updateLocalCrop(cropId, changes) {
   const crop = activeInvoice?.crops.find((item) => item.id === cropId);
   if (!crop) return;
   Object.assign(crop, changes);
+  activeInvoice.review_complete = 0;
+  activeInvoice.reviewed_by = "";
+  renderInvoiceReviewState();
   if (Object.prototype.hasOwnProperty.call(changes, "label")) {
     const checkbox = cropListEl.querySelector(`[data-crop-confirm="${CSS.escape(cropId)}"]`);
     if (checkbox) checkbox.checked = false;
@@ -435,6 +521,7 @@ async function saveCropFields(cropId) {
     }
     await refreshInvoices();
     await refreshReadiness();
+    renderInvoiceReviewState();
   })().finally(() => savePromises.delete(cropId));
   savePromises.set(cropId, promise);
   return promise;
@@ -512,7 +599,7 @@ async function exportHandoff() {
   button.disabled = true;
   button.textContent = "Đang đóng gói…";
   try {
-    const response = await api("/api/handoff/export");
+    const response = await api(`/api/handoff/export?scope=${encodeURIComponent(annotationScope)}`);
     const blob = await response.blob();
     const filename = response.headers.get("Content-Disposition")?.match(/filename="([^"]+)"/)?.[1] || "ocr_labels_handoff.zip";
     const unconfirmed = Number(response.headers.get("X-Unconfirmed-Crops") || 0);
@@ -522,7 +609,7 @@ async function exportHandoff() {
     anchor.download = filename;
     anchor.click();
     URL.revokeObjectURL(url);
-    toast(unconfirmed ? `Đã tải ${filename}; bỏ qua ${unconfirmed} crop chưa xác nhận.` : `Đã tải ${filename}.`);
+    toast(unconfirmed ? `Đã tải ${filename}; bỏ qua ${unconfirmed} crop chưa xác nhận.` : `Đã tải ${filename} gồm 20 hóa đơn đã rà soát.`);
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -550,7 +637,7 @@ async function importHandoff(file) {
     await refreshInvoices();
     if (activeInvoice) await loadActiveInvoice({ keepPage: true });
     else await refreshReadiness();
-    toast(`Đã nhập ${result.imported} crop; bỏ qua ${result.skipped_duplicates} crop trùng khớp.`);
+    toast(`Đã nhập ${result.imported} crop; bỏ qua ${result.skipped_duplicates} crop trùng; đánh dấu ${result.reviewed_invoices} hóa đơn đã rà soát.`);
   } catch (error) {
     toast(error.message, true);
     setSaveStatus("Nhập gói bị lỗi", true);
@@ -565,8 +652,11 @@ async function boot() {
     const metaResponse = await api("/api/meta");
     const meta = await metaResponse.json();
     fieldTypes = meta.field_types;
+    scopeDefinitions = meta.scopes;
+    $("#scope-selector").value = annotationScope;
+    renderScopeSummary();
     await refreshInvoices();
-    await refreshReadiness();
+    await refreshReadinessNow();
     setSaveStatus("Đã lưu trên máy này");
     if (allInvoices.length) await selectInvoice(allInvoices[0].id);
   } catch (error) {
@@ -578,6 +668,8 @@ async function boot() {
 $("#search").addEventListener("input", renderInvoiceList);
 $("#split-filter").addEventListener("change", renderInvoiceList);
 $("#status-filter").addEventListener("change", renderInvoiceList);
+$("#scope-selector").addEventListener("change", () => changeScope().catch((error) => toast(error.message, true)));
+$("#invoice-review-button").addEventListener("click", toggleInvoiceReview);
 $("#save-crop").addEventListener("click", saveSelectedCrop);
 $("#handoff-export-button").addEventListener("click", exportHandoff);
 $("#handoff-import-file").addEventListener("change", (event) => importHandoff(event.target.files[0]));

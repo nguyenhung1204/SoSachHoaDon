@@ -12,6 +12,7 @@
     <div class="brand-mark" aria-hidden="true">OCR</div>
     <div class="brand-copy"><span>NHẬN DẠNG CHỮ HÓA ĐƠN</span><h1>Gán nhãn crop</h1></div>
     <div class="top-actions">
+      <label class="scope-picker" for="scope-selector">Người dùng<select id="scope-selector"><option value="duy">Duy · hóa đơn 1–20</option><option value="van">Vân · hóa đơn 21–40</option><option value="all">Tổng hợp · đủ 40 hóa đơn</option></select></label>
       <span id="save-indicator" class="save-indicator"><i></i>Đang nạp dữ liệu</span>
       <button id="export-button" class="button button-primary" type="button">Xuất ZIP recognition</button>
     </div>
@@ -20,13 +21,13 @@
   <main class="workspace">
     <aside class="invoice-panel panel" aria-label="Danh sách hóa đơn">
       <div class="panel-heading">
-        <div><span class="eyebrow">BỘ DỮ LIỆU</span><h2>Hóa đơn <span id="invoice-total">—</span></h2></div>
+        <div><span class="eyebrow">BỘ DỮ LIỆU</span><h2>Hóa đơn <span id="invoice-total">—</span></h2><p id="scope-summary" class="scope-summary"></p></div>
         <span id="invoice-progress" class="count-badge">0/40</span>
       </div>
       <label class="search-box"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Tìm mã, PDF, nhà cung cấp" autocomplete="off"></label>
       <div class="filters">
         <label>Split<select id="split-filter"><option value="all">Tất cả</option><option value="train">Train</option><option value="val">Validation</option><option value="test">Test</option></select></label>
-        <label>Trạng thái<select id="status-filter"><option value="all">Tất cả</option><option value="empty">Chưa cắt crop</option><option value="review">Cần gán nhãn</option><option value="done">Đã xác nhận</option></select></label>
+        <label>Trạng thái<select id="status-filter"><option value="all">Tất cả</option><option value="unreviewed">Chưa rà soát</option><option value="reviewed">Đã rà soát</option><option value="review">Cần gán nhãn</option><option value="done">Đã xác nhận</option></select></label>
       </div>
       <div id="invoice-list" class="invoice-list" role="list"></div>
       <div class="panel-foot"><span class="dot"></span><span>Lưu trên máy này · nguồn chỉ đọc</span></div>
@@ -71,8 +72,12 @@
         <select id="invoice-split" disabled><option value="train">Train</option><option value="val">Validation</option><option value="test">Test</option></select>
         <span id="split-warning" class="split-warning" role="status"></span>
       </div>
+      <div class="invoice-review-actions">
+        <span id="invoice-review-state">Chưa rà soát hóa đơn</span>
+        <button id="invoice-review-button" class="button button-soft" type="button" disabled>Đánh dấu đã rà soát</button>
+      </div>
       <div class="handoff-actions" aria-label="Chuyển nhãn giữa các máy">
-        <button id="handoff-export-button" class="button button-soft" type="button">Xuất gói nhãn dở dang</button>
+        <button id="handoff-export-button" class="button button-soft" type="button">Xuất ZIP 20 hóa đơn</button>
         <label class="button button-soft import-handoff-button" for="handoff-import-file">Nhập gói nhãn<input id="handoff-import-file" type="file" accept=".zip,application/zip" hidden></label>
         <p>Chỉ chuyển crop đã xác nhận; khi nhập sẽ kiểm tra đúng PDF và báo xung đột.</p>
       </div>

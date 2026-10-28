@@ -29,10 +29,14 @@ JSON trong bundle chỉ là gợi ý cấp trường, không thay thế bản ch
 
 ## Cùng gán nhãn với người khác
 
-- Mỗi người clone cùng nhánh/repo và chạy app trên máy riêng. Chia các hóa đơn để tránh hai người cắt trùng; nhớ có crop ở cả train, validation và test.
-- Sau khi đã xác nhận nhãn, bấm **Xuất gói nhãn dở dang**. ZIP chỉ chứa ảnh crop và metadata của crop đã xác nhận, không chứa bản sao PDF.
-- Gửi ZIP cho người đang tổng hợp. Trên máy tổng hợp bấm **Nhập gói nhãn** và chọn ZIP. App kiểm tra hash của `40HD.json`, PDF tương ứng và split trước khi nhập.
-- Crop trùng khớp được bỏ qua. Nếu cùng crop ID hoặc cùng vùng nhưng nhãn/ảnh khác nhau, app báo xung đột và không ghi đè nhãn có sẵn. Hãy đối chiếu thủ công rồi chỉ nhập gói đã xử lý.
+- Cả ba máy clone/cập nhật cùng nhánh và dùng cùng `40HD_colab_bundle.zip`. Trong danh sách **Người dùng**, mỗi người chọn đúng phạm vi của mình.
+- **Duy** chọn `Duy · hóa đơn 1–20`: `INV-0001`–`INV-0020`, tương ứng `HD_001.pdf`–`HD_020.pdf`.
+- **Vân** chọn `Vân · hóa đơn 21–40`: `INV-0021`–`INV-0030` tương ứng `HD_021.pdf`–`HD_030.pdf`; các hóa đơn còn lại là `INV-0031/HD_173.pdf`, `INV-0032/HD_182.pdf`, `INV-0033/HD_184.pdf`, `INV-0034/HD_186.pdf`, `INV-0035/HD_189.pdf`, `INV-0036/HD_193.pdf`, `INV-0037/HD_196.pdf`, `INV-0038/HD_202.pdf`, `INV-0039/HD_208.pdf`, `INV-0040/HD_209.pdf`. App lấy cặp mã này theo đúng thứ tự trong JSON nguồn và ghi danh sách đầy đủ vào manifest.
+- Với từng hóa đơn, cắt và xác nhận các crop. Khi đã xem hết PDF, bấm **Đánh dấu đã rà soát**. Nếu hóa đơn không có vùng chữ phù hợp, có thể hoàn tất với 0 crop sau khi xác nhận hộp thoại. Hóa đơn có crop chưa xác nhận sẽ không được đánh dấu hoàn tất. Thêm, sửa hoặc xóa crop sẽ mở lại trạng thái rà soát.
+- Khi cả 20 hóa đơn hiện **Đã rà soát**, bấm **Xuất ZIP Duy · 20 hóa đơn** hoặc **Xuất ZIP Vân · 20 hóa đơn**. Gói chứa crop đã xác nhận và manifest (mã hóa đơn/PDF, split, tọa độ, loại trường, nhãn, người gán và checksum nguồn/ảnh); không chứa PDF đầy đủ, JSON nguồn hoặc SQLite.
+- Người tổng hợp chọn `Tổng hợp · đủ 40 hóa đơn`, lần lượt bấm **Nhập gói nhãn** và chọn ZIP của Duy rồi Vân. App kiểm tra định dạng, đúng phạm vi 20 hóa đơn, `40HD.json`, từng PDF và split trước khi nhập.
+- Crop trùng hoàn toàn được bỏ qua. Nếu crop hoặc người rà soát bị xung đột, cả lần nhập đó bị từ chối và nhãn hiện có không bị ghi đè. Hãy đối chiếu gói với người gán nhãn trước khi thử lại.
+- Sau khi thanh tiến độ ghi `40/40 rà soát`, dùng **Xuất ZIP recognition**. App chỉ xuất khi crop hợp lệ, đã xác nhận, ký tự thuộc dictionary và có mẫu ở cả ba split. ZIP cuối giữ nguyên split 30/5/5.
 - Không gửi hoặc commit `state\labeler.sqlite3`, thư mục `state\crops`, `exports` hay file PDF/JSON riêng lẻ lên GitHub.
 
 ## Xuất dữ liệu recognition
@@ -50,6 +54,16 @@ ZIP xuất được lưu trong `ocr_labeler\exports` và tải xuống trình du
 - `exports`: các ZIP recognition và gói bàn giao đã tạo.
 
 Toàn bộ các thư mục trên bị `.gitignore` loại khỏi commit. Sao lưu gói bàn giao hoặc cả thư mục `state` nếu muốn giữ dữ liệu khi chuyển máy.
+
+## Kiểm thử app gán nhãn
+
+Trong PowerShell ở `ocr_labeler`, sau khi chạy `start_labeler.ps1`:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest test_labeler -v
+```
+
+Kiểm thử tạo dữ liệu tạm và xóa riêng dữ liệu tạm đó; PDF, JSON, SQLite và crop thật không bị sửa.
 
 ## Giới hạn
 

@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -17,7 +18,7 @@ import zipfile
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 APP_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = APP_DIR.parent
@@ -49,6 +50,8 @@ FIELD_TYPES = {
     "total_amount": "Tổng tiền",
     "other": "Khác",
 }
+ANNOTATORS = {"duy": "Duy", "van": "Vân"}
+ANNOTATION_SCOPES = ("duy", "van", "all")
 
 for folder in (STATE_DIR, PAGE_DIR, CROP_DIR, EXPORT_DIR):
     folder.mkdir(parents=True, exist_ok=True)
@@ -225,7 +228,9 @@ def initialize_database() -> None:
                 pdf TEXT NOT NULL,
                 supplier_name TEXT NOT NULL DEFAULT '',
                 seller_tax_code TEXT NOT NULL DEFAULT '',
-                split TEXT NOT NULL CHECK(split IN ('train','val','test'))
+                split TEXT NOT NULL CHECK(split IN ('train','val','test')),
+                review_complete INTEGER NOT NULL DEFAULT 0 CHECK(review_complete IN (0,1)),
+                reviewed_by TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS crops (
                 id TEXT PRIMARY KEY,
@@ -249,6 +254,11 @@ def initialize_database() -> None:
             CREATE INDEX IF NOT EXISTS crops_invoice_idx ON crops(invoice_id, created_at);
             """
         )
+        invoice_columns = {row[1] for row in connection.execute("PRAGMA table_info(invoices)")}
+        if "review_complete" not in invoice_columns:
+            connection.execute("ALTER TABLE invoices ADD COLUMN review_complete INTEGER NOT NULL DEFAULT 0 CHECK(review_complete IN (0,1))")
+        if "reviewed_by" not in invoice_columns:
+            connection.execute("ALTER TABLE invoices ADD COLUMN reviewed_by TEXT NOT NULL DEFAULT ''")
         existing = {row[0] for row in connection.execute("SELECT id FROM invoices")}
         if not existing:
             splits, _ = default_splits(source)
@@ -268,15 +278,55 @@ def initialize_database() -> None:
         write_split_manifest(connection)
 
 
+def scope_invoice_ids(scope: str) -> list[str]:
+    source_ids = [invoice["id"] for invoice in load_source_invoices()]
+    if scope == "all":
+        return source_ids
+    if scope == "duy":
+        return source_ids[:20]
+    if scope == "van":
+        return source_ids[20:]
+    raise ValueError("Phạm vi phải là Duy, Vân hoặc toàn bộ 40 hóa đơn.")
+
+
 def invoice_rows() -> list[dict]:
     with connect() as connection:
         rows = connection.execute(
             """SELECT i.*,COUNT(c.id) crop_count,
-                      SUM(CASE WHEN c.confirmed=1 AND c.label<>'' THEN 1 ELSE 0 END) confirmed_count
+                      COALESCE(SUM(CASE WHEN c.confirmed=1 AND c.label<>'' THEN 1 ELSE 0 END),0) confirmed_count
                FROM invoices i LEFT JOIN crops c ON c.invoice_id=i.id
-               GROUP BY i.id ORDER BY i.id"""
+               GROUP BY i.id"""
         ).fetchall()
-    return [dict(row) for row in rows]
+    source_order = {invoice_id: index for index, invoice_id in enumerate(scope_invoice_ids("all"))}
+    result = [dict(row) for row in rows]
+    result.sort(key=lambda row: source_order.get(row["id"], len(source_order)))
+    for index, row in enumerate(result, start=1):
+        row["position"] = index
+    return result
+
+
+def set_invoice_review(invoice_id: str, complete: bool, reviewer: str) -> None:
+    if reviewer not in (*ANNOTATORS.values(), "Người tổng hợp"):
+        raise ValueError("Người rà soát không hợp lệ.")
+    with connect() as connection:
+        invoice = connection.execute("SELECT id FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+        if invoice is None:
+            raise ValueError("Không tìm thấy hóa đơn.")
+        if complete:
+            if reviewer in ANNOTATORS.values():
+                scope = "duy" if reviewer == "Duy" else "van"
+                if invoice_id not in scope_invoice_ids(scope):
+                    raise ValueError(f"Hóa đơn này không thuộc phạm vi của {reviewer}.")
+            unconfirmed = connection.execute(
+                "SELECT COUNT(*) FROM crops WHERE invoice_id=? AND (confirmed<>1 OR TRIM(label)='')",
+                (invoice_id,),
+            ).fetchone()[0]
+            if unconfirmed:
+                raise ValueError(f"Hóa đơn còn {unconfirmed} crop chưa xác nhận.")
+        connection.execute(
+            "UPDATE invoices SET review_complete=?,reviewed_by=? WHERE id=?",
+            (int(bool(complete)), reviewer if complete else "", invoice_id),
+        )
 
 
 def get_invoice(invoice_id: str) -> dict | None:
@@ -406,6 +456,8 @@ def system_resources() -> dict:
 def readiness(full_check: bool = False) -> dict:
     invoices = invoice_rows()
     counts = {split: sum(1 for row in invoices if row["split"] == split) for split in SPLITS}
+    reviewed_ids = [row["id"] for row in invoices if row["review_complete"]]
+    unreviewed_ids = [row["id"] for row in invoices if not row["review_complete"]]
     all_crops: list[dict] = []
     with connect() as connection:
         all_crops = [dict(row) for row in connection.execute(
@@ -414,6 +466,10 @@ def readiness(full_check: bool = False) -> dict:
 
     errors: list[str] = []
     warnings: list[str] = []
+    if unreviewed_ids:
+        examples = ", ".join(unreviewed_ids[:8])
+        suffix = "…" if len(unreviewed_ids) > 8 else ""
+        errors.append(f"Còn {len(unreviewed_ids)} hóa đơn chưa rà soát: {examples}{suffix}.")
     if counts != {"train": 30, "val": 5, "test": 5}:
         errors.append(f"Split hiện tại là train/val/test {counts['train']}/{counts['val']}/{counts['test']}; cần 30/5/5.")
     if not all_crops:
@@ -483,6 +539,15 @@ def readiness(full_check: bool = False) -> dict:
     return {
         "split_counts": counts,
         "invoice_count": len(invoices),
+        "reviewed_invoice_count": len(reviewed_ids),
+        "unreviewed_invoice_ids": unreviewed_ids,
+        "scope_progress": {
+            scope: {
+                "total": len(scope_invoice_ids(scope)),
+                "reviewed": sum(1 for invoice_id in scope_invoice_ids(scope) if invoice_id in reviewed_ids),
+            }
+            for scope in ANNOTATION_SCOPES
+        },
         "crop_count": len(all_crops),
         "confirmed_count": sum(1 for crop in all_crops if crop["confirmed"] and crop["label"].strip()),
         "data_ready": data_ready,
@@ -558,46 +623,66 @@ def export_dataset() -> Path:
     return zip_path
 
 
-def export_handoff() -> tuple[Path, int]:
+def export_handoff(scope: str) -> tuple[Path, int]:
+    if scope not in ANNOTATORS:
+        raise ValueError("Chỉ Duy hoặc Vân mới xuất gói 20 hóa đơn; chọn Tổng hợp để nhập gói.")
+    reviewer = ANNOTATORS[scope]
+    invoice_ids = scope_invoice_ids(scope)
+    rows_by_id = {row["id"]: row for row in invoice_rows()}
+    if any(invoice_id not in rows_by_id for invoice_id in invoice_ids):
+        raise ValueError("Danh sách hóa đơn trong phạm vi không khớp bộ nguồn.")
+    incomplete = [
+        invoice_id for invoice_id in invoice_ids
+        if not rows_by_id[invoice_id]["review_complete"] or rows_by_id[invoice_id]["reviewed_by"] != reviewer
+    ]
+    if incomplete:
+        raise ValueError(f"Chưa rà soát đủ 20 hóa đơn của {reviewer}: {', '.join(incomplete[:8])}.")
+    unconfirmed = [
+        row["id"] for row in invoice_rows()
+        if row["id"] in invoice_ids and row["confirmed_count"] != row["crop_count"]
+    ]
+    if unconfirmed:
+        raise ValueError("Còn crop chưa xác nhận trong phạm vi: " + ", ".join(unconfirmed[:8]) + ".")
+
+    placeholders = ",".join("?" for _ in invoice_ids)
     with connect() as connection:
         crops = [dict(row) for row in connection.execute(
-            """SELECT c.*,i.pdf,i.split FROM crops c JOIN invoices i ON i.id=c.invoice_id
-               WHERE c.confirmed=1 AND TRIM(c.label)<>'' ORDER BY i.id,c.created_at,c.id"""
+            f"""SELECT c.*,i.pdf,i.split FROM crops c JOIN invoices i ON i.id=c.invoice_id
+                WHERE c.invoice_id IN ({placeholders}) ORDER BY c.invoice_id,c.created_at,c.id""",
+            invoice_ids,
         )]
-        unconfirmed = connection.execute(
-            "SELECT COUNT(*) FROM crops WHERE confirmed<>1 OR TRIM(label)=''"
-        ).fetchone()[0]
-    if not crops:
-        raise ValueError("Chưa có nhãn đã xác nhận để đưa vào gói bàn giao.")
 
     invoices: dict[str, dict] = {}
-    for crop in crops:
-        invoice_id = crop["invoice_id"]
-        if invoice_id not in invoices:
-            pdf_path = PDF_DIR / crop["pdf"]
-            if not pdf_path.is_file():
-                raise ValueError(f"Không tìm thấy PDF nguồn cho {invoice_id}: {crop['pdf']}")
-            digest = sha256_file(pdf_path)
-            invoices[invoice_id] = {
-                "pdf": crop["pdf"], "pdf_sha256": digest, "split": crop["split"],
-            }
+    for invoice_id in invoice_ids:
+        row = rows_by_id[invoice_id]
+        pdf_path = PDF_DIR / row["pdf"]
+        if not pdf_path.is_file():
+            raise ValueError(f"Không tìm thấy PDF nguồn cho {invoice_id}: {row['pdf']}")
+        invoices[invoice_id] = {
+            "pdf": row["pdf"], "pdf_sha256": sha256_file(pdf_path), "split": row["split"],
+            "review_complete": True, "reviewed_by": row["reviewed_by"],
+        }
 
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "dataset": "40HD",
+        "scope": scope,
+        "annotator": reviewer,
+        "invoice_ids": invoice_ids,
         "source_labels_sha256": hashlib.sha256(LABELS_JSON.read_bytes()).hexdigest(),
         "exported_at": now_iso(),
         "invoices": invoices,
         "crops": [],
     }
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6]
-    zip_path = EXPORT_DIR / f"ocr_labels_handoff_{stamp}.zip"
+    zip_path = EXPORT_DIR / f"ocr_labels_{scope}_{stamp}.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for crop in crops:
             image_name = f"{crop['id']}.png"
             image_path = CROP_DIR / crop["image_name"]
             if not image_path.is_file():
                 raise ValueError(f"Thiếu ảnh crop {crop['id']}.")
+            image_bytes = image_path.read_bytes()
             manifest["crops"].append({
                 "id": crop["id"], "invoice_id": crop["invoice_id"], "pdf": crop["pdf"],
                 "page": crop["page"], "x0": crop["x0"], "y0": crop["y0"],
@@ -605,14 +690,16 @@ def export_handoff() -> tuple[Path, int]:
                 "pdf_y0": crop["pdf_y0"], "pdf_x1": crop["pdf_x1"], "pdf_y1": crop["pdf_y1"],
                 "field_type": crop["field_type"], "label": crop["label"],
                 "confirmed": True, "image": f"crops/{image_name}",
+                "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
             })
-            archive.write(image_path, f"crops/{image_name}")
+            archive.writestr(f"crops/{image_name}", image_bytes)
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
         archive.writestr("README.txt", (
-            "Goi nhan dang nhan hoa don. Chi nhap vao app dung bo 40HD; PDF nguon duoc doi chieu bang SHA-256.\n"
-            "Cac crop trong goi da duoc nguoi gan nhan xac nhan.\n"
+            f"Goi nhan dang nhan hoa don 40HD; pham vi {reviewer}: {len(invoice_ids)} hoa don.\n"
+            "Manifest ghi checksum SHA-256 cho 40HD.json, tung PDF nguon va tung anh crop.\n"
+            "Goi chi chua crop da xac nhan; khong chua PDF, JSON nguon hoac SQLite.\n"
         ).encode("utf-8"))
-    return zip_path, int(unconfirmed)
+    return zip_path, 0
 
 
 def import_handoff(zip_path: Path) -> dict[str, int]:
@@ -645,22 +732,34 @@ def import_handoff(zip_path: Path) -> dict[str, int]:
             manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise ValueError("Không đọc được manifest.json trong gói nhãn.") from exc
-        if not isinstance(manifest, dict) or manifest.get("schema_version") != 1 or manifest.get("dataset") != "40HD":
+        if not isinstance(manifest, dict) or manifest.get("schema_version") != 2 or manifest.get("dataset") != "40HD":
             raise ValueError("Gói nhãn không thuộc định dạng 40HD được hỗ trợ.")
         if manifest.get("source_labels_sha256") != hashlib.sha256(LABELS_JSON.read_bytes()).hexdigest():
             raise ValueError("40HD.json khác bộ nguồn của gói nhãn; không nhập để tránh ghép nhầm hóa đơn.")
+        scope = manifest.get("scope")
+        if scope not in ANNOTATORS:
+            raise ValueError("Phạm vi gói nhãn không hợp lệ; chỉ nhận gói Duy hoặc Vân.")
+        reviewer = ANNOTATORS[scope]
+        expected_invoice_ids = scope_invoice_ids(scope)
+        if manifest.get("annotator") != reviewer or manifest.get("invoice_ids") != expected_invoice_ids:
+            raise ValueError(f"Phạm vi hoặc người gán nhãn không khớp gói của {reviewer}.")
         invoice_manifest = manifest.get("invoices")
         crops = manifest.get("crops")
-        if not isinstance(invoice_manifest, dict) or not isinstance(crops, list) or not crops:
-            raise ValueError("Manifest thiếu hóa đơn hoặc crop.")
+        if not isinstance(invoice_manifest, dict) or set(invoice_manifest) != set(expected_invoice_ids) or not isinstance(crops, list):
+            raise ValueError("Manifest phải liệt kê đủ đúng 20 hóa đơn trong phạm vi.")
 
         local_invoices = {row["id"]: row for row in invoice_rows()}
-        for invoice_id, item in invoice_manifest.items():
+        for invoice_id in expected_invoice_ids:
+            item = invoice_manifest[invoice_id]
             if not isinstance(item, dict):
                 raise ValueError(f"Metadata hóa đơn không hợp lệ: {invoice_id}.")
             local = local_invoices.get(invoice_id)
             if local is None or local["pdf"] != item.get("pdf") or local["split"] != item.get("split"):
                 raise ValueError(f"Hóa đơn/split không khớp bộ local: {invoice_id}.")
+            if item.get("review_complete") is not True or item.get("reviewed_by") != reviewer:
+                raise ValueError(f"Hóa đơn {invoice_id} chưa được {reviewer} rà soát hoàn tất.")
+            if local["review_complete"] and local["reviewed_by"] not in ("", reviewer):
+                raise ValueError(f"Xung đột người rà soát ở hóa đơn {invoice_id}; không ghi đè trạng thái hiện có.")
             pdf_path = PDF_DIR / local["pdf"]
             if sha256_file(pdf_path) != item.get("pdf_sha256"):
                 raise ValueError(f"PDF nguồn không khớp hóa đơn {invoice_id}: {local['pdf']}.")
@@ -685,6 +784,8 @@ def import_handoff(zip_path: Path) -> dict[str, int]:
             invoice_info = invoice_manifest.get(invoice_id)
             if not invoice_info or crop.get("pdf") != invoice_info.get("pdf"):
                 raise ValueError(f"Crop {crop_id} không khớp PDF trong manifest.")
+            if invoice_id not in expected_invoice_ids:
+                raise ValueError(f"Crop {crop_id} nằm ngoài phạm vi được giao.")
             if crop.get("confirmed") is not True:
                 raise ValueError(f"Crop {crop_id} chưa được xác nhận; hãy chỉ xuất nhãn đã đối chiếu.")
             field_type = crop.get("field_type")
@@ -704,7 +805,7 @@ def import_handoff(zip_path: Path) -> dict[str, int]:
                 pdf_coords = tuple(float(crop[key]) for key in ("pdf_x0", "pdf_y0", "pdf_x1", "pdf_y1"))
             except (KeyError, TypeError, ValueError) as exc:
                 raise ValueError(f"Tọa độ crop {crop_id} không hợp lệ.") from exc
-            if page < 0 or len(pdf_coords) != 4 or coords[2] <= coords[0] or coords[3] <= coords[1]:
+            if page < 0 or not all(math.isfinite(value) for value in pdf_coords) or coords[2] <= coords[0] or coords[3] <= coords[1]:
                 raise ValueError(f"Tọa độ crop {crop_id} không hợp lệ.")
             size_key = (invoice_id, page)
             if size_key not in page_sizes:
@@ -722,15 +823,21 @@ def import_handoff(zip_path: Path) -> dict[str, int]:
                         raise ValueError(f"Kích thước ảnh crop {crop_id} không khớp tọa độ.")
             except Exception as exc:
                 raise ValueError(f"Ảnh crop {crop_id} bị lỗi.") from exc
+            image_digest = hashlib.sha256(data).hexdigest()
+            if crop.get("image_sha256") != image_digest:
+                raise ValueError(f"Checksum ảnh crop {crop_id} không khớp.")
             item = {
                 "id": crop_id, "invoice_id": invoice_id, "page": page,
                 "x0": coords[0], "y0": coords[1], "x1": coords[2], "y1": coords[3],
                 "pdf_x0": pdf_coords[0], "pdf_y0": pdf_coords[1],
                 "pdf_x1": pdf_coords[2], "pdf_y1": pdf_coords[3],
                 "field_type": field_type, "label": label, "image_name": f"{crop_id}.png",
-                "image_sha256": hashlib.sha256(data).hexdigest(), "image_bytes": data,
+                "image_sha256": image_digest, "image_bytes": data,
             }
             incoming.append(item)
+        expected_names = {"manifest.json", "README.txt"} | {f"crops/{item['image_name']}" for item in incoming}
+        if set(names) != expected_names:
+            raise ValueError("ZIP chứa file thừa hoặc thiếu ảnh crop theo manifest.")
 
     with connect() as connection:
         existing_rows = [dict(row) for row in connection.execute("SELECT * FROM crops")]
@@ -773,6 +880,14 @@ def import_handoff(zip_path: Path) -> dict[str, int]:
             (import_dir / item["image_name"]).write_bytes(item["image_bytes"])
         with connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            for invoice_id in expected_invoice_ids:
+                current = connection.execute(
+                    "SELECT review_complete,reviewed_by FROM invoices WHERE id=?", (invoice_id,)
+                ).fetchone()
+                if current is None:
+                    raise ValueError(f"Không tìm thấy hóa đơn local: {invoice_id}.")
+                if current["review_complete"] and current["reviewed_by"] not in ("", reviewer):
+                    raise ValueError(f"Xung đột người rà soát ở hóa đơn {invoice_id}; không ghi đè trạng thái hiện có.")
             for item in accepted:
                 destination = CROP_DIR / item["image_name"]
                 if destination.exists():
@@ -789,15 +904,17 @@ def import_handoff(zip_path: Path) -> dict[str, int]:
                      item["pdf_y1"], item["field_type"], item["label"], 1, item["image_name"],
                      timestamp, timestamp),
                 )
-        with connect() as connection:
-            write_split_manifest(connection)
+            connection.execute(
+                f"UPDATE invoices SET review_complete=1,reviewed_by=? WHERE id IN ({','.join('?' for _ in expected_invoice_ids)})",
+                [reviewer, *expected_invoice_ids],
+            )
     except Exception:
         for path in moved:
             path.unlink(missing_ok=True)
         raise
     finally:
         shutil.rmtree(import_dir, ignore_errors=True)
-    return {"imported": len(accepted), "skipped_duplicates": skipped}
+    return {"imported": len(accepted), "skipped_duplicates": skipped, "reviewed_invoices": len(expected_invoice_ids)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -865,13 +982,24 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/meta":
                 report = readiness()
-                self._json({"field_types": FIELD_TYPES, **report})
+                source = load_source_invoices()
+                scopes = {
+                    "duy": {"label": "Duy", "start": 1, "end": 20,
+                            "invoices": [{"id": row["id"], "pdf": row["pdf"]} for row in source[:20]]},
+                    "van": {"label": "Vân", "start": 21, "end": 40,
+                            "invoices": [{"id": row["id"], "pdf": row["pdf"]} for row in source[20:]]},
+                    "all": {"label": "Người tổng hợp", "start": 1, "end": 40,
+                            "invoices": [{"id": row["id"], "pdf": row["pdf"]} for row in source]},
+                }
+                self._json({"field_types": FIELD_TYPES, "scopes": scopes, **report})
             elif path == "/api/invoices":
-                query = dict(part.split("=", 1) for part in parsed.query.split("&") if "=" in part)
-                search = unquote(query.get("q", "")).casefold()
-                split = query.get("split", "all")
-                status = query.get("status", "all")
-                rows = invoice_rows()
+                query = parse_qs(parsed.query)
+                search = query.get("q", [""])[0].casefold()
+                split = query.get("split", ["all"])[0]
+                status = query.get("status", ["all"])[0]
+                scope = query.get("scope", ["duy"])[0]
+                scope_ids = set(scope_invoice_ids(scope))
+                rows = [row for row in invoice_rows() if row["id"] in scope_ids]
                 rows = [row for row in rows if (split == "all" or row["split"] == split)]
                 rows = [row for row in rows if not search or search in row["id"].casefold() or search in row["pdf"].casefold() or search in row["supplier_name"].casefold()]
                 if status == "empty":
@@ -880,7 +1008,11 @@ class Handler(BaseHTTPRequestHandler):
                     rows = [row for row in rows if row["confirmed_count"] < row["crop_count"] or row["crop_count"] == 0]
                 elif status == "done":
                     rows = [row for row in rows if row["crop_count"] > 0 and row["confirmed_count"] == row["crop_count"]]
-                self._json({"invoices": rows})
+                elif status == "unreviewed":
+                    rows = [row for row in rows if not row["review_complete"]]
+                elif status == "reviewed":
+                    rows = [row for row in rows if row["review_complete"]]
+                self._json({"invoices": rows, "total": len(scope_ids), "scope": scope})
             elif path.startswith("/api/invoice/"):
                 invoice_id = path.removeprefix("/api/invoice/")
                 invoice = get_invoice(invoice_id)
@@ -905,7 +1037,8 @@ class Handler(BaseHTTPRequestHandler):
                 crop_id = path.removeprefix("/api/crop-text/")
                 self._json({"text": extract_crop_text(crop_id)})
             elif path == "/api/handoff/export":
-                archive_path, unconfirmed = export_handoff()
+                scope = parse_qs(parsed.query).get("scope", [""])[0]
+                archive_path, unconfirmed = export_handoff(scope)
                 self._send_file(archive_path, "application/zip", archive_path.name, {
                     "X-Unconfirmed-Crops": str(unconfirmed),
                 })
@@ -933,6 +1066,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._delete_crop(crop_id, body)
             elif path.startswith("/api/crops/"):
                 self._update_crop(path.removeprefix("/api/crops/"), body)
+            elif path.startswith("/api/invoice/") and path.endswith("/review"):
+                invoice_id = path.removeprefix("/api/invoice/").removesuffix("/review")
+                if not isinstance(body.get("review_complete"), bool):
+                    raise ValueError("Trạng thái rà soát phải là true hoặc false.")
+                set_invoice_review(invoice_id, body["review_complete"], str(body.get("reviewer", "")))
+                self._json({"review_complete": body["review_complete"], "reviewed_by": body.get("reviewer", "")})
             elif path.startswith("/api/invoice/") and path.endswith("/split"):
                 invoice_id = path.removeprefix("/api/invoice/").removesuffix("/split")
                 self._update_split(invoice_id, body)
@@ -1001,6 +1140,7 @@ class Handler(BaseHTTPRequestHandler):
                      x0*scale_x, y0*scale_y, x1*scale_x, y1*scale_y,
                      "other", "", 0, image_name, timestamp, timestamp),
                 )
+                connection.execute("UPDATE invoices SET review_complete=0,reviewed_by='' WHERE id=?", (invoice_id,))
         except Exception:
             crop_path.unlink(missing_ok=True)
             raise
@@ -1017,22 +1157,26 @@ class Handler(BaseHTTPRequestHandler):
         if confirmed and not label.strip():
             raise ValueError("Nhập nội dung nhìn thấy trước khi xác nhận nhãn.")
         with connect() as connection:
+            crop = connection.execute("SELECT invoice_id FROM crops WHERE id=?", (crop_id,)).fetchone()
+            if crop is None:
+                raise ValueError("Không tìm thấy crop.")
             cursor = connection.execute(
                 "UPDATE crops SET label=?,field_type=?,confirmed=?,updated_at=? WHERE id=?",
                 (label, field_type, int(confirmed), now_iso(), crop_id),
             )
-            if cursor.rowcount == 0:
-                raise ValueError("Không tìm thấy crop.")
+            if cursor.rowcount:
+                connection.execute("UPDATE invoices SET review_complete=0,reviewed_by='' WHERE id=?", (crop["invoice_id"],))
         self._json({"saved": True, "confirmed": confirmed})
 
     def _delete_crop(self, crop_id: str, body: dict) -> None:
         if body.get("confirm") is not True:
             raise ValueError("Cần xác nhận trước khi xóa crop.")
         with connect() as connection:
-            row = connection.execute("SELECT image_name FROM crops WHERE id=?", (crop_id,)).fetchone()
+            row = connection.execute("SELECT image_name,invoice_id FROM crops WHERE id=?", (crop_id,)).fetchone()
             if row is None:
                 raise ValueError("Không tìm thấy crop.")
             connection.execute("DELETE FROM crops WHERE id=?", (crop_id,))
+            connection.execute("UPDATE invoices SET review_complete=0,reviewed_by='' WHERE id=?", (row["invoice_id"],))
         (CROP_DIR / row["image_name"]).unlink(missing_ok=True)
         self._json({"deleted": True})
 

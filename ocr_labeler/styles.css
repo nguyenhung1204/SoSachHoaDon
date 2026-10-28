@@ -27,6 +27,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .brand-copy span { color: #a9bed8; }
 .brand-copy h1 { margin: 3px 0 0; font-size: 20px; }
 .top-actions { margin-left: auto; display: flex; align-items: center; gap: 18px; }
+.scope-picker { display: flex; flex-direction: column; gap: 3px; color: #bfd0e4; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.scope-picker select { max-width: 210px; height: 32px; padding: 0 8px; border: 1px solid #526b8c; border-radius: 7px; color: white; background: #1d385b; font-size: 11px; }
 .save-indicator { display: flex; align-items: center; gap: 8px; color: #deebf8; font-size: 13px; white-space: nowrap; }
 .save-indicator i, .dot { width: 8px; height: 8px; display: inline-block; border-radius: 50%; background: #34b98a; }
 .save-indicator.error i { background: #ee6b5f; }
@@ -42,6 +44,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .invoice-panel { display: flex; flex-direction: column; }
 .panel-heading { min-height: 83px; padding: 17px 17px 12px; display: flex; align-items: center; justify-content: space-between; }
 .panel-heading h2 { margin: 5px 0 0; font-size: 20px; }
+.scope-summary { max-width: 230px; margin: 4px 0 0; color: #738197; font-size: 10px; line-height: 1.35; }
 .count-badge { padding: 6px 10px; color: #1749ba; background: var(--blue-soft); border-radius: 99px; font-size: 12px; font-weight: 800; }
 .search-box { margin: 0 12px 11px; height: 40px; border: 1px solid var(--line); border-radius: 9px; display: flex; align-items: center; gap: 9px; padding: 0 10px; color: #6f829b; }
 .search-box span { font-size: 24px; line-height: 1; }
@@ -98,6 +101,9 @@ kbd { min-width: 21px; padding: 1px 4px; border: 1px solid #c9d5e6; border-botto
 .split-editor label { font-size: 12px; font-weight: 800; color: #41546d; }
 .split-editor select { height: 32px; min-width: 113px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; background: white; color: #29415e; font-size: 12px; }
 .split-warning { grid-column: 1 / -1; min-height: 0; color: #945a00; font-size: 11px; line-height: 1.4; }
+.invoice-review-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 11px; border-bottom: 1px solid #edf1f5; color: #61748c; font-size: 10px; }
+.invoice-review-actions .button { min-height: 31px; padding: 0 9px; font-size: 10px; }
+.invoice-review-actions .button:disabled { opacity: .5; cursor: not-allowed; }
 .handoff-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 9px 11px; border-bottom: 1px solid #edf1f5; }
 .handoff-actions .button { min-width: 0; min-height: 34px; padding: 0 7px; font-size: 10px; text-align: center; }
 .import-handoff-button { display: flex; align-items: center; justify-content: center; cursor: pointer; }
@@ -152,6 +158,8 @@ kbd { min-width: 21px; padding: 1px 4px; border: 1px solid #c9d5e6; border-botto
   .brand-mark { width: 40px; height: 40px; }
   .brand-copy h1 { font-size: 17px; }
   .save-indicator { display: none; }
+  .scope-picker { display: flex; font-size: 9px; }
+  .scope-picker select { max-width: 150px; }
   .button { min-height: 38px; padding: 0 10px; font-size: 12px; }
   .workspace { height: auto; min-height: calc(100vh - 68px); display: flex; flex-direction: column; padding: 8px; }
   .invoice-panel { min-height: 220px; max-height: 300px; }
@@ -159,8 +167,14 @@ kbd { min-width: 21px; padding: 1px 4px; border: 1px solid #c9d5e6; border-botto
   .label-panel { min-height: 420px; }
 }
 @media (max-width: 560px) {
-  .top-actions { gap: 0; }
-  .top-actions .button { max-width: 145px; white-space: normal; line-height: 1.2; }
+  .topbar { gap: 7px; padding: 0 8px; }
+  .brand-mark { width: 34px; height: 34px; }
+  .brand-copy span { display: none; }
+  .brand-copy h1 { font-size: 14px; }
+  .top-actions { gap: 5px; }
+  .scope-picker { font-size: 8px; }
+  .scope-picker select { max-width: 112px; padding: 0 4px; font-size: 9px; }
+  .top-actions .button { max-width: 115px; white-space: normal; line-height: 1.2; }
   .pdf-header { align-items: flex-start; }
   .pdf-controls { width: 100%; justify-content: space-between; margin-left: 0; }
   .pdf-controls .button-soft { display: inline-flex; align-items: center; }
