@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#10233f">
+  <title>Gán nhãn crop hóa đơn · PaddleOCR</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-mark" aria-hidden="true">OCR</div>
+    <div class="brand-copy"><span>NHẬN DẠNG CHỮ HÓA ĐƠN</span><h1>Gán nhãn crop</h1></div>
+    <div class="top-actions">
+      <span id="save-indicator" class="save-indicator"><i></i>Đang nạp dữ liệu</span>
+      <button id="export-button" class="button button-primary" type="button">Xuất ZIP recognition</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="invoice-panel panel" aria-label="Danh sách hóa đơn">
+      <div class="panel-heading">
+        <div><span class="eyebrow">BỘ DỮ LIỆU</span><h2>Hóa đơn <span id="invoice-total">—</span></h2></div>
+        <span id="invoice-progress" class="count-badge">0/40</span>
+      </div>
+      <label class="search-box"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Tìm mã, PDF, nhà cung cấp" autocomplete="off"></label>
+      <div class="filters">
+        <label>Split<select id="split-filter"><option value="all">Tất cả</option><option value="train">Train</option><option value="val">Validation</option><option value="test">Test</option></select></label>
+        <label>Trạng thái<select id="status-filter"><option value="all">Tất cả</option><option value="empty">Chưa cắt crop</option><option value="review">Cần gán nhãn</option><option value="done">Đã xác nhận</option></select></label>
+      </div>
+      <div id="invoice-list" class="invoice-list" role="list"></div>
+      <div class="panel-foot"><span class="dot"></span><span>Lưu trên máy này · nguồn chỉ đọc</span></div>
+    </aside>
+
+    <section class="pdf-panel panel" aria-label="Xem PDF và cắt vùng chữ">
+      <div class="pdf-header">
+        <div class="document-title"><div class="file-icon">PDF</div><div><span class="eyebrow">HÓA ĐƠN GỐC</span><h2 id="pdf-name">Chọn hóa đơn</h2><p id="pdf-meta">PDF được đọc từ thư mục nguồn ở chế độ chỉ đọc</p></div></div>
+        <div class="pdf-controls">
+          <button id="prev-invoice" class="icon-button" type="button" aria-label="Hóa đơn trước" title="Hóa đơn trước (Alt+←)">‹</button>
+          <span id="invoice-position">— / —</span>
+          <button id="next-invoice" class="icon-button" type="button" aria-label="Hóa đơn tiếp" title="Hóa đơn tiếp (Alt+→)">›</button>
+          <span class="divider"></span>
+          <button id="zoom-out" class="icon-button" type="button" aria-label="Thu nhỏ" title="Thu nhỏ">−</button>
+          <span id="zoom-value" class="zoom-value">—</span>
+          <button id="zoom-in" class="icon-button" type="button" aria-label="Phóng to" title="Phóng to">+</button>
+          <button id="fit-width" class="button button-soft" type="button">Vừa khung</button>
+          <span class="divider"></span>
+          <button id="prev-page" class="icon-button" type="button" aria-label="Trang trước">↑</button>
+          <span id="page-position">— / —</span>
+          <button id="next-page" class="icon-button" type="button" aria-label="Trang sau">↓</button>
+        </div>
+      </div>
+      <div class="crop-hint"><span class="hint-icon" aria-hidden="true">i</span><span>Kéo khung sát một dòng chữ trên hóa đơn, xem trước crop rồi lưu. Nhấn <kbd>S</kbd> để lưu vùng đã chọn; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> xác nhận nhãn.</span></div>
+      <div id="pdf-viewport" class="pdf-viewport">
+        <div id="empty-pdf" class="empty-state"><div class="empty-icon">PDF</div><h3>Chọn hóa đơn để bắt đầu</h3><p>Ảnh trang được render cục bộ ở 300 DPI. Không có PDF nào được tải lên mạng.</p></div>
+        <div id="page-stage" class="page-stage" hidden>
+          <img id="page-image" alt="Trang hóa đơn PDF">
+          <div id="selection-layer" class="selection-layer" aria-label="Kéo chuột để chọn vùng crop"></div>
+        </div>
+      </div>
+      <div class="pdf-footer"><div class="selection-review"><img id="selection-preview" alt="Xem trước vùng chữ được cắt" hidden><span id="selection-status">Chưa chọn vùng chữ</span></div><button id="save-crop" class="button button-primary" type="button" disabled>Lưu crop và nhập nhãn</button></div>
+    </section>
+
+    <aside class="label-panel panel" aria-label="Crop và nhãn recognition">
+      <div class="label-heading">
+        <div class="heading-icon" aria-hidden="true">Aa</div>
+        <div><span class="eyebrow">NHÃN NHẬN DẠNG</span><h2>Crop đã tạo</h2><p>Mỗi crop phải được đối chiếu trực tiếp với PDF.</p></div>
+      </div>
+      <div class="split-editor">
+        <label for="invoice-split">Tập của hóa đơn</label>
+        <select id="invoice-split" disabled><option value="train">Train</option><option value="val">Validation</option><option value="test">Test</option></select>
+        <span id="split-warning" class="split-warning" role="status"></span>
+      </div>
+      <div class="handoff-actions" aria-label="Chuyển nhãn giữa các máy">
+        <button id="handoff-export-button" class="button button-soft" type="button">Xuất gói nhãn dở dang</button>
+        <label class="button button-soft import-handoff-button" for="handoff-import-file">Nhập gói nhãn<input id="handoff-import-file" type="file" accept=".zip,application/zip" hidden></label>
+        <p>Chỉ chuyển crop đã xác nhận; khi nhập sẽ kiểm tra đúng PDF và báo xung đột.</p>
+      </div>
+      <div id="readiness-card" class="readiness-card" aria-live="polite"></div>
+      <div id="crop-list" class="crop-list"><div class="empty-state compact"><h3>Chưa có crop</h3><p>Kéo chọn một dòng trên PDF rồi bấm “Lưu crop”.</p></div></div>
+      <div class="label-foot"><span id="crop-count">0 crop · 0 xác nhận</span><span>Ctrl+Enter = xác nhận</span></div>
+    </aside>
+  </main>
+
+  <dialog id="confirm-dialog" class="confirm-dialog">
+    <form method="dialog"><h2>Xóa crop này?</h2><p>Ảnh crop và nội dung nhãn trong thư mục local sẽ bị xóa.</p><div class="dialog-actions"><button class="button button-soft" value="cancel">Giữ lại</button><button id="confirm-delete" class="button button-danger" value="delete">Xóa crop</button></div></form>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
